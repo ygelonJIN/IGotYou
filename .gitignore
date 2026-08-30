@@ -1,0 +1,5 @@
+.DS_Store
+*.igotyou
+attempt_state.json
+.idea/
+build/
