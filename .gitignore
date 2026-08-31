@@ -1,5 +1,11 @@
+# Miscellaneous
 .DS_Store
 *.igotyou
 attempt_state.json
 .idea/
-build/
+
+# Flutter/Dart/Pub related
+.dart_tool/
+.dart_tmp_home/
+.fvm/
+/build/

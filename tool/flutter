@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# LRW 工作区统一的 flutter 入口。
+#
+# - SDK 本体放在本机固定路径（通过 .fvm/versions/stable 软链解析，指向本机 SDK）
+# - PUB_CACHE 固定在工作区 .fvm/pub-cache，与 SDK 隔离
+# - 直接 source SDK 的 shared.sh 并调用 shared::execute（对应 stock bin/flutter 的职责）
+#
+# 用法：tool/flutter pub get / build / run / ...
+set -e
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SDK="$(cd "$ROOT/.fvm/versions/stable" && pwd)"
+
+export FLUTTER_ROOT="$SDK"
+export PUB_CACHE="${PUB_CACHE:-$ROOT/.fvm/pub-cache}"
+
+# 以下为 Flutter 标准 bootstrap（对应 stock bin/flutter 的职责）
+BIN_DIR="$SDK/bin"
+SHARED_NAME="$BIN_DIR/internal/shared.sh"
+PROG_NAME="flutter"
+
+unset CDPATH
+source "$SHARED_NAME"
+shared::execute "$@"

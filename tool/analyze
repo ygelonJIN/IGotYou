@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# 工作区统一静态检查入口：改动后先跑这个，不用等真机构建才发现编译错。
+#
+# 与 tool/flutter 的区别：直接调用 SDK 内自带 dart 的 analyze，
+# 跳过 flutter 工具链的版本自更新（在受限/沙盒环境下会因写权限报错）。
+# 用法：tool/analyze [要分析的路径，默认整个工程]
+set -e
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SDK="$(cd "$ROOT/.fvm/versions/stable" && pwd)"
+DART="$SDK/bin/cache/dart-sdk/bin/dart"
+
+# 分析服务器需要写插件状态目录（~/.dartServer）；受限环境下不可写会直接崩溃，
+# 固定改用工作区内可写目录（.dart_tool 里已指向 .fvm/pub-cache 的绝对路径，不受影响）。
+export HOME="$ROOT/.fvm/analyze-home"
+mkdir -p "$HOME"
+
+exec "$DART" analyze "$@"
