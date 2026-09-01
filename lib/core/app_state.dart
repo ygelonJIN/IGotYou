@@ -11,6 +11,9 @@ import 'vault_session.dart';
 ///
 /// 职责：库文件/尝试状态文件的路径管理、解锁引擎与会话生命周期、
 /// 创建保险柜、打开成功进入会话、锁定清空。
+///
+/// [beforeLock] 由当前页面注册：锁定前等待未落盘的自动保存
+/// （全局上锁按钮触发锁定前调用，避免焦点内改动丢失）。
 class AppState extends ChangeNotifier {
   String? _vaultPath;
   String? _statePath;
@@ -18,6 +21,26 @@ class AppState extends ChangeNotifier {
 
   UnlockEngine? _engine;
   VaultSession? _session;
+
+  /// 设置侧栏是否展开：展开期间全局上锁按钮隐藏，
+  /// 改由设置栏内右上角渲染同款按钮（见 settings_panel）。
+  bool _settingsOpen = false;
+
+  bool get settingsOpen => _settingsOpen;
+
+  void setSettingsOpen(bool open) {
+    if (_settingsOpen == open) return;
+    _settingsOpen = open;
+    notifyListeners();
+  }
+
+  /// 锁定前回调：当前页面注册（编辑页/设置页），返回前会等待保存完成。
+  Future<void> Function()? beforeLock;
+
+  /// 注册/清除锁定前回调（页面挂载时注册、销毁时清除）。
+  void setBeforeLock(Future<void> Function()? fn) {
+    beforeLock = fn;
+  }
 
   /// 应用文档目录（path_provider），初始化时解析一次。
   Future<Directory> _appDir() => getApplicationDocumentsDirectory();
@@ -94,6 +117,7 @@ class AppState extends ChangeNotifier {
 
   /// 锁定：清空会话解密数据，重建解锁引擎（机会与冷却保留）。
   Future<void> lock() async {
+    _settingsOpen = false;
     _session?.lock();
     _session = null;
     if (hasVault) {

@@ -5,6 +5,7 @@ import 'core/app_state.dart';
 import 'theme/theme.dart';
 import 'ui/unlock_screen.dart';
 import 'ui/vault_screen.dart';
+import 'ui/widgets/vault_lock_button.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,6 +20,8 @@ class VaultApp extends StatefulWidget {
 }
 
 class _VaultAppState extends State<VaultApp> {
+  final _navKey = GlobalKey<NavigatorState>();
+
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
@@ -26,6 +29,15 @@ class _VaultAppState extends State<VaultApp> {
       child: MaterialApp(
         title: 'IGotYou',
         debugShowCheckedModeBanner: false,
+        navigatorKey: _navKey,
+        // 全局上锁按钮：盖在所有页面（含遮罩）之上，位置恒定。
+        builder: (context, child) => Stack(
+          textDirection: TextDirection.ltr,
+          children: [
+            Positioned.fill(child: child ?? const SizedBox.shrink()),
+            VaultLockButtonOverlay(navigatorKey: _navKey),
+          ],
+        ),
         theme: buildVaultTheme(),
         home: const RootGate(),
       ),

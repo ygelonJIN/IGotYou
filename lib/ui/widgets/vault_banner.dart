@@ -5,8 +5,7 @@ import 'package:flutter/material.dart';
 import '../../theme/tokens.dart';
 
 /// 顶部悬浮提示横幅：统一提示/报错样式，全部使用金色模板。
-/// 金属渐变底 + 柔和阴影，从屏幕最上方滑入，自动消失。
-/// 不区分成功/失败：统一金色锁图标 + 金色正文。
+/// 深墨卡底 + 金线描边 + 直角卡面，从屏幕最上方滑入，自动消失。不区分成功/失败：统一金色锁图标 + 金色正文。
 void showVaultBanner(BuildContext context, String text) {
   final overlay = Overlay.of(context, rootOverlay: true);
   late final OverlayEntry entry;
@@ -103,9 +102,13 @@ class _VaultBannerState extends State<_VaultBanner>
                     maxWidth: AppSizes.bannerMaxWidth,
                   ),
                   decoration: BoxDecoration(
-                    gradient: AppGradients.gateMetal,
+                    color: AppColors.surface,
                     borderRadius: BorderRadius.all(
                       Radius.circular(AppRadius.gate),
+                    ),
+                    border: Border.all(
+                      color: AppColors.goldDim,
+                      width: AppBorder.width,
                     ),
                     boxShadow: const [AppShadows.banner],
                   ),

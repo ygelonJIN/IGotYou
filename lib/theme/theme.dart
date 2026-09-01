@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+
 import 'tokens.dart';
 
 ThemeData buildVaultTheme() {
   return ThemeData(
     brightness: Brightness.dark,
+    // 全局唯一字体：Noto Serif SC（衬线宋体），缺字回退系统字体。
+    fontFamily: AppFontFamilies.serif,
+    fontFamilyFallback: const ['PingFang SC', 'sans-serif'],
     scaffoldBackgroundColor: AppColors.bg,
     colorScheme: const ColorScheme.dark(
       primary: AppColors.gold,

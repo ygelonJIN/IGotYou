@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../theme/tokens.dart';
 
-/// 主按钮：gold 底、黑字、高 48、圆角 2（DEVELOPMENT 9.5）。
+/// 主按钮：gold 底、黑字、高 48、直角（DEVELOPMENT 9.5）。
 /// 禁用态降为 surfaceAlt 底 + textSecondary 字。
 /// [highlighted] 高亮态：金色粗边框，用于"只差最后一步"的解锁按钮。
 class VaultButton extends StatelessWidget {
@@ -49,8 +49,7 @@ class VaultButton extends StatelessWidget {
   }
 }
 
-/// 危险操作按钮（清空/删除等）：与导航按钮同风格——暗金底 + 白字，全宽。
-/// 不做红色区分（DEVELOPMENT 8.12：全应用去除红色，统一主题）。
+/// 危险操作按钮（清空/删除等）：金线描边 + 表面底，全宽。
 class VaultDangerButton extends StatelessWidget {
   final String label;
   final VoidCallback? onPressed;
@@ -65,12 +64,13 @@ class VaultDangerButton extends StatelessWidget {
       child: TextButton(
         onPressed: onPressed,
         style: TextButton.styleFrom(
-          backgroundColor: AppColors.goldDim,
+          backgroundColor: AppColors.surface,
           foregroundColor: AppColors.textPrimary,
           disabledBackgroundColor: AppColors.surfaceAlt,
           disabledForegroundColor: AppColors.textSecondary,
           shape: const RoundedRectangleBorder(
             borderRadius: BorderRadius.all(Radius.circular(AppRadius.button)),
+            side: BorderSide(color: AppColors.goldDim, width: AppBorder.width),
           ),
           textStyle: AppTextStyles.buttonLabel,
         ),

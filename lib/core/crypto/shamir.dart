@@ -68,24 +68,29 @@ class Shamir {
     return xs.map((x) => _evalPoly(coeff, x)).toList();
   }
 
-  /// 用 K 份 (xs, ys) 重构秘密（Lagrange 插值于 0）。
-  static BigInt reconstruct(List<BigInt> xs, List<BigInt> ys) {
+  /// 用 K 份 (xs, ys) 在 [targetX] 处求 Lagrange 插值（域上多项式求值）。
+  /// [targetX] 为 0 时即重构主密钥，见 [reconstruct]。
+  static BigInt evaluateAt(List<BigInt> xs, List<BigInt> ys, BigInt targetX) {
     assert(xs.length == ys.length && xs.isNotEmpty);
     final k = xs.length;
-    var secret = BigInt.zero;
+    var result = BigInt.zero;
     for (var i = 0; i < k; i++) {
       var numerator = BigInt.one;
       var denominator = BigInt.one;
       for (var j = 0; j < k; j++) {
         if (i == j) continue;
-        numerator = _mod(numerator * (BigInt.zero - xs[j]));
+        numerator = _mod(numerator * (targetX - xs[j]));
         denominator = _mod(denominator * (xs[i] - xs[j]));
       }
       final lagrange = _mod(numerator * _modInv(denominator));
-      secret = _mod(secret + ys[i] * lagrange);
+      result = _mod(result + ys[i] * lagrange);
     }
-    return secret;
+    return result;
   }
+
+  /// 用 K 份 (xs, ys) 重构秘密（Lagrange 插值于 0）。
+  static BigInt reconstruct(List<BigInt> xs, List<BigInt> ys) =>
+      evaluateAt(xs, ys, BigInt.zero);
 
   static BigInt _bytesToBigInt(Uint8List bytes) {
     var v = BigInt.zero;

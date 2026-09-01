@@ -94,6 +94,70 @@ class Keychain {
     }
   }
 
+  /// 增量补份额：保持现有份额不变，只给 [newKey] 生成新份额。
+  ///
+  /// 现有份额是同一多项式上的点；用阈值 K 份**可解密**的旧份额
+  /// （明文密钥 → KEK → 解密 y）做 Lagrange 插值，在同一多项式上求出
+  /// 新钥匙的 y，再用新钥匙自己的密码加密。
+  ///
+  /// 无需全部钥匙的明文：明文缺失的份额保持原样、不参与插值。
+  /// 可解密份额不足 K、或某份份额明文在手却解不开（钥匙改过密）时返回 null，
+  /// 调用方应回退全量重切。
+  static Future<ShareRecord?> addShare({
+    required Entry newKey,
+    required List<ShareRecord> existingShares,
+    required List<Entry> keyEntries,
+    required int threshold,
+    required Argon2Deriver deriver,
+    required String Function(Entry entry) keyFor,
+  }) async {
+    if (existingShares.isEmpty || threshold < 1) return null;
+    final xs = <BigInt>[];
+    final ys = <BigInt>[];
+    for (final share in existingShares) {
+      Entry? entry;
+      for (final e in keyEntries) {
+        if (e.id == share.entryId) {
+          entry = e;
+          break;
+        }
+      }
+      if (entry == null) return null; // 份额对应的钥匙已不存在 → 不能增量
+      String plain;
+      try {
+        plain = keyFor(entry);
+      } catch (_) {
+        continue; // 明文缺失（如未查看的二次加密钥匙）：份额保持原样
+      }
+      final kek = await deriver.derive(normalizeSecret(plain));
+      final y = await tryDecryptShare(share, kek);
+      if (y == null) return null; // 明文在手却解不开 → 钥匙改过密 → 全量重切
+      xs.add(share.x);
+      ys.add(Shamir.bytes32ToBigInt(y));
+      if (xs.length >= threshold) break;
+    }
+    if (xs.length < threshold) return null;
+
+    // 新钥匙的 x 坐标（与 splitSecret 相同的去零/去重规避）。
+    final existingXs = existingShares.map((s) => s.x).toSet();
+    var xNew = await entryX(newKey.id);
+    xNew %= Shamir.primeP;
+    if (xNew == BigInt.zero || existingXs.contains(xNew)) {
+      var suffix = BigInt.from(existingShares.length + 1);
+      xNew = _mod(xNew + suffix, Shamir.primeP);
+    }
+    final yNew = Shamir.evaluateAt(xs, ys, xNew);
+    final yBytes = Shamir.bigIntToBytes32(yNew);
+    final kek = await deriver.derive(normalizeSecret(keyFor(newKey)));
+    final box = await _aesGcm.encryptBytes(yBytes, kek);
+    return ShareRecord(
+      entryId: newKey.id,
+      x: xNew,
+      nonce: Uint8List.fromList(box.nonce),
+      cipher: Uint8List.fromList([...box.cipherText, ...box.mac.bytes]),
+    );
+  }
+
   /// 从若干份额点 (x, y) 重构 MK（阈值份额数）。
   static Future<Uint8List> reconstructMk(
     List<ShareRecord> shares, {

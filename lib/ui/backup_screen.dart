@@ -28,8 +28,8 @@ class _BackupScreenState extends State<BackupScreen> {
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
     final topInset = VaultTopBar.totalHeight(mq);
-    // 底部遮罩区高度：与顶部渐变区对称（VaultBottomScrim.height = bottom + bottomMaskHeight）。
-    final bottomInset = VaultBottomScrim.height(mq);
+    // 底部留白：与主页一致（contentBottomInset）。
+    final bottomInset = AppSizes.contentBottomInset;
 
     return Scaffold(
       body: Stack(

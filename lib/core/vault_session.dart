@@ -77,6 +77,11 @@ class VaultSession extends ChangeNotifier {
   /// 份额是否需要重建（钥匙集/口令/阈值变化后置 true）。
   bool _sharesDirty = true;
 
+  /// 份额对应的钥匙 id 集：与 [_shares] 同步维护，
+  /// 用于判断份额变更属于"纯新增/纯移除"（可增量处理）还是"改密/换阈值"
+  /// （必须全量重切）。
+  Set<String> _sharesKeyIds = const {};
+
   /// 二次加密条目的明文密钥缓存（会话内存，锁定清空，不落盘）。
   final Map<String, String> _doubleKeys = {};
 
@@ -88,6 +93,12 @@ class VaultSession extends ChangeNotifier {
     required this.config,
   }) {
     _sharesDirty = _needsResplit();
+    // 文件份额与当前钥匙集一致时直接采用：解锁后首次保存不必无谓地
+    // 全量重切，也解锁"只给新钥匙补份额"的增量路径。
+    if (!_sharesDirty) {
+      _shares = List.of(fileData.shares);
+      _sharesKeyIds = fileData.shares.map((s) => s.entryId).toSet();
+    }
   }
 
   /// 解锁后打开会话：用 MK 解密 BODY，加载条目与配置。
@@ -409,6 +420,23 @@ class VaultSession extends ChangeNotifier {
     return entry;
   }
 
+  /// 份额是否待重切（新建流程降级时需恢复快照）。
+  bool get sharesDirty => _sharesDirty;
+
+  /// 把刚加入的钥匙条目降级为非钥匙，份额状态恢复到加入前。
+  ///
+  /// 仅限创建流程在份额重切失败（如二次加密钥匙明文缺失）时调用：
+  /// 条目保留、不再是钥匙，之后保存不再触发重切，因此不会索要其他条目的密码。
+  /// [sharesDirty] 传入加入该钥匙前的值，避免跳过真正需要的重切。
+  void downgradeToNonKey(String entryId, {required bool sharesDirty}) {
+    final i = entries.indexWhere((e) => e.id == entryId);
+    if (i < 0 || !entries[i].isKey) return;
+    entries[i] = entries[i].copyWith(isKey: false);
+    _sharesDirty = sharesDirty;
+    _enforceKConstraint();
+    notifyListeners();
+  }
+
   void updateEntry(Entry entry, {String? name, String? secret, String? note}) {
     final oldSecret = entry.secret;
     final updated = entry.copyWith(
@@ -555,6 +583,26 @@ class VaultSession extends ChangeNotifier {
       throw StateError('钥匙配置无效：需要至少一把钥匙');
     }
     final deriver = fileData.header.deriver;
+    final keyIds = keys.map((e) => e.id).toSet();
+    // 纯移除：多项式未变，直接丢弃被删钥匙的份额即可——不重切旧份额、
+    // 不需要其他钥匙的明文，删除也无需索要二次加密密码。
+    if (_sharesKeyIds.isNotEmpty &&
+        keyIds.length < _sharesKeyIds.length &&
+        keyIds.every(_sharesKeyIds.contains)) {
+      _shares = _shares.where((s) => keyIds.contains(s.entryId)).toList();
+      _sharesKeyIds = keyIds;
+      return;
+    }
+    // 纯新增：只在现有份额上补新钥匙的份额，不重切旧份额——
+    // 无需全部钥匙的明文（二次加密钥匙未查看时不用索要密码）。
+    final added = await _tryAddShares(keys, deriver);
+    if (added != null) {
+      _shares = added;
+      _sharesKeyIds = keyIds;
+      return;
+    }
+    // 其余（钥匙改密/二次加密开闭/命中数变化/混合变更）：
+    // 全量重切（需要每把钥匙的明文；缺失时抛 VaultKeyMissingException）。
     _shares = await Keychain.splitSecret(
       mk: mk,
       keyEntries: keys,
@@ -562,12 +610,59 @@ class VaultSession extends ChangeNotifier {
       deriver: deriver,
       keyFor: _keySecret,
     );
+    _sharesKeyIds = keyIds;
+  }
+
+  /// 增量补份额：现有份额 + 新增钥匙的份额。
+  ///
+  /// 仅当现有份额对应的钥匙仍是钥匙、且钥匙集是"纯新增"（无移除/改密）时
+  /// 尝试；可解密份额不足阈值、或份额与当前明文不匹配时返回 null，
+  /// 由调用方回退全量重切。
+  Future<List<ShareRecord>?> _tryAddShares(
+    List<Entry> keys,
+    Argon2Deriver deriver,
+  ) async {
+    if (_shares.isEmpty) return null;
+    final shareIds = _shares.map((s) => s.entryId).toSet();
+    final keyIds = keys.map((e) => e.id).toSet();
+    final addedIds = keyIds.difference(shareIds);
+    if (addedIds.isEmpty) return null; // 不是新增场景
+    if (!shareIds.every(keyIds.contains)) return null; // 有钥匙被移除/改密
+    final newShares = <ShareRecord>[];
+    for (final id in addedIds) {
+      final newKey = keys.firstWhere((e) => e.id == id);
+      try {
+        final share = await Keychain.addShare(
+          newKey: newKey,
+          existingShares: [..._shares, ...newShares],
+          keyEntries: keys,
+          threshold: config.hitCount,
+          deriver: deriver,
+          keyFor: _keySecret,
+        );
+        if (share == null) return null;
+        newShares.add(share);
+      } on VaultKeyMissingException {
+        return null; // 新钥匙本身明文缺失：回退全量（由全量重切统一处理）
+      }
+    }
+    return [..._shares, ...newShares];
+  }
+
+  /// 恢复刚删除的条目（删除保存失败时回滚内存状态，界面保持原状）。
+  void restoreEntry(Entry entry, {required bool sharesDirty}) {
+    if (entryById(entry.id) != null) return;
+    entries.add(entry);
+    _sharesDirty = sharesDirty;
+    _enforceKConstraint();
+    notifyListeners();
   }
 
   /// 锁定：清空全部解密数据、二次加密密钥缓存与主密钥（DEVELOPMENT 5.7），强制 GC。
   void lock() {
     entries = const [];
     _shares = const [];
+    _sharesKeyIds = const {};
     _doubleKeys.clear();
     mk.fillRange(0, mk.length, 0);
     notifyListeners();

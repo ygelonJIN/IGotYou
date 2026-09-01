@@ -5,21 +5,23 @@ import '../core/app_state.dart';
 import '../core/models/entry.dart';
 import '../core/vault_session.dart';
 import '../theme/tokens.dart';
-import 'backup_screen.dart';
 import 'entry_edit_screen.dart';
-import 'settings_screen.dart';
+import 'widgets/pill_button.dart';
+import 'widgets/settings_panel.dart';
 import 'widgets/vault_banner.dart';
 import 'widgets/vault_bottom_scrim.dart';
-import 'widgets/vault_button.dart';
 import 'widgets/vault_entry_tile.dart';
 import 'widgets/vault_field.dart';
-import 'widgets/vault_top_bar.dart';
+import 'widgets/missing_key_prompt.dart';
 
 /// 保险柜主页：全屏覆盖布局。
-/// - 顶部：统一顶栏组件（上锁 + 渐变遮罩，与各页面同一位置）。
+/// - 顶部浮层：设置胶囊。
 /// - 全屏条目列表（滚动穿过面板，条目从上下遮罩下透出渐隐）。
-/// - 底部：渐隐遮罩（IgnorePointer）+ 检索框/设置/备份/添加浮层，
+/// - 底部：渐隐遮罩（IgnorePointer）+ 检索浮层（检索框 + 右侧添加胶囊），
 ///   浮层直接压在遮罩之上；条目可滑入遮罩下方淡出（非硬切）。
+/// - 设置页从左侧滑入（75% 面板 + 遮罩），收起沿浮层控制。
+/// - 「上锁」不在页内，由全局 `VaultLockButtonOverlay` 渲染在右上角
+///   （与主页顶部胶囊同一水平线），设置页展开时隐藏。
 class VaultScreen extends StatefulWidget {
   const VaultScreen({super.key});
 
@@ -30,11 +32,26 @@ class VaultScreen extends StatefulWidget {
 class _VaultScreenState extends State<VaultScreen> {
   final _search = TextEditingController();
   String _query = '';
+  bool _settingsOpen = false;
 
   @override
   void dispose() {
     _search.dispose();
     super.dispose();
+  }
+
+  void _openSettings() {
+    if (_settingsOpen) return;
+    context.read<AppState>().setSettingsOpen(true);
+    FocusScope.of(context).unfocus();
+    setState(() => _settingsOpen = true);
+  }
+
+  void _closeSettings() {
+    if (!_settingsOpen) return;
+    context.read<AppState>().setSettingsOpen(false);
+    FocusScope.of(context).unfocus();
+    setState(() => _settingsOpen = false);
   }
 
   @override
@@ -48,125 +65,204 @@ class _VaultScreenState extends State<VaultScreen> {
               .where((e) => e.name.toLowerCase().contains(q))
               .toList();
 
-    final mq = MediaQuery.of(context);
-    // 顶部渐变区总高：统一顶栏（VaultTopBar.totalHeight = safeTop + scrimHeight），
-    // 与各页面同一数值，全局只调 AppSizes.scrimHeight。
-    final topInset = VaultTopBar.totalHeight(mq);
-    // 底部列表留白：略高于检索浮层顶（safeBottom + homeListBottomInset），
-    // 让条目可滑入底部渐隐遮罩下方再淡出，而不是硬切。
-    final bottomInset = mq.padding.bottom + AppSizes.homeListBottomInset;
+    return PopScope(
+      canPop: !_settingsOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _settingsOpen) _closeSettings();
+      },
+      child: Scaffold(
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final settingsWidth = width * 0.75;
 
-    return Scaffold(
-      body: Stack(
-        children: [
-          // 全屏条目列表（顶部从面板下开始，底部让出检索框区）
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: () => FocusScope.of(context).unfocus(),
-              behavior: HitTestBehavior.translucent,
-              child: filtered.isEmpty
-                  ? const Center(
-                      child: Text('暂无条目', style: AppTextStyles.bodySecondary),
-                    )
-                  : ListView.builder(
-                      padding: EdgeInsets.only(
-                        top: topInset,
-                        bottom: bottomInset,
-                        left: AppSpacing.unit4,
-                        right: AppSpacing.unit4,
+            return Stack(
+              clipBehavior: Clip.hardEdge,
+              children: [
+                // 主页主内容：设置展开时右移 75%，仅左侧 1/4 可见。
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 340),
+                  curve: Curves.easeOutCubic,
+                  left: _settingsOpen ? settingsWidth : 0,
+                  top: 0,
+                  bottom: 0,
+                  width: width,
+                  child: _buildHomeBody(
+                    context,
+                    session: session,
+                    filtered: filtered,
+                  ),
+                ),
+                // 遮罩：盖住可见的主页区，点击收起设置。
+                Positioned.fill(
+                  child: IgnorePointer(
+                    ignoring: !_settingsOpen,
+                    child: AnimatedOpacity(
+                      opacity: _settingsOpen ? 1 : 0,
+                      duration: const Duration(milliseconds: 340),
+                      curve: Curves.easeOutCubic,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: _closeSettings,
+                        child: ColoredBox(
+                          color: Colors.black.withValues(alpha: 0.26),
+                        ),
                       ),
-                      itemCount: filtered.length,
-                      itemBuilder: (_, i) {
-                        final e = filtered[i];
-                        return Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: AppSizes.tileGap,
-                          ),
-                          child: VaultEntryTile(
-                            entry: e,
-                            onTap: () => _openEdit(session, e),
-                            onToggleKey: () {
-                              _toggleKey(session, e);
-                            },
-                          ),
-                        );
-                      },
                     ),
+                  ),
+                ),
+                // 设置页（左侧 75%），从左侧滑入。
+                AnimatedPositioned(
+                  duration: const Duration(milliseconds: 340),
+                  curve: Curves.easeOutCubic,
+                  left: _settingsOpen ? 0 : -settingsWidth,
+                  top: 0,
+                  bottom: 0,
+                  width: settingsWidth,
+                  child: SettingsPanel(
+                    onClose: _closeSettings,
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// 主页主内容（全屏列表 + 浮层控制）。
+  Widget _buildHomeBody(
+    BuildContext context, {
+    required VaultSession session,
+    required List<Entry> filtered,
+  }) {
+    return Stack(
+      children: [
+        Positioned.fill(child: Container(color: AppColors.bg)),
+        // 全屏条目列表（顶部从浮层下开始，底部让出检索框区）
+        Positioned.fill(
+          child: GestureDetector(
+            onTap: () => FocusScope.of(context).unfocus(),
+            behavior: HitTestBehavior.translucent,
+            child: filtered.isEmpty
+                ? const _EmptyVaultState()
+                : ListView.builder(
+                    padding: EdgeInsets.fromLTRB(
+                      AppSizes.pageEdge,
+                      AppSizes.contentTopInset,
+                      AppSizes.pageEdge,
+                      AppSizes.contentBottomInset,
+                    ),
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) {
+                      final e = filtered[i];
+                      return Padding(
+                        padding: const EdgeInsets.only(
+                          bottom: AppSizes.tileGap,
+                        ),
+                        child: VaultEntryTile(
+                          entry: e,
+                          onTap: () => _openEdit(session, e),
+                          onToggleKey: () {
+                            _toggleKey(session, e);
+                          },
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ),
+        // 顶部遮罩：压在滚动内容之上，让滚到顶栏下的条目柔和淡出。
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: AppSizes.topScrimHeight,
+          child: IgnorePointer(
+            child: const DecoratedBox(
+              decoration: BoxDecoration(gradient: AppGradients.topScrim),
             ),
           ),
-          // 顶部：统一顶栏组件（上锁 + 渐变遮罩），与设置/备份/编辑页同一位置。
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: VaultTopBar(
-              title: '',
-              showBack: false,
-              showTitleRow: false,
-              onBack: () {},
-            ),
-          ),
-          // 底部渐隐遮罩：仅视觉（IgnorePointer），条目滚动经过时透出渐隐。
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: const VaultBottomScrim(),
-          ),
-          // 底部浮层：设置/备份/添加 + 检索框，直接压在渐隐遮罩之上。
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.unit4,
-                  AppSpacing.unit3,
-                  AppSpacing.unit4,
-                  AppSpacing.unit4,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // 设置 / 备份 / 添加
-                    Row(
-                      children: [
-                        _TopNavButton(
-                          '设置',
-                          () => _openSettings(context),
-                        ),
-                        const SizedBox(width: AppSpacing.unit2),
-                        _TopNavButton(
-                          '备份',
-                          () => _openBackup(context),
-                        ),
-                        const SizedBox(width: AppSpacing.unit2),
-                        _TopNavButton(
-                          '添加',
-                          () => _openEdit(session, null),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.unit3),
-                    // 检索框
-                    VaultField(
-                      controller: _search,
-                      hint: '检索',
-                      icon: Icons.search,
-                      textInputAction: TextInputAction.search,
-                      onChanged: (v) => setState(() => _query = v),
-                      onSubmitted: () => FocusScope.of(context).unfocus(),
-                    ),
-                  ],
-                ),
+        ),
+        // 顶部浮层：设置胶囊（上锁由全局 VaultLockButtonOverlay 渲染，避免动画双按钮）。
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppSizes.pageEdge,
+                AppSizes.topChromeInset,
+                AppSizes.pageEdge,
+                0,
+              ),
+              child: Row(
+                children: [
+                  PillButton(
+                    icon: Icons.menu_rounded,
+                    label: '设置',
+                    highlight: true,
+                    onTap: _openSettings,
+                  ),
+                ],
               ),
             ),
           ),
-        ],
-      ),
+        ),
+        // 底部遮罩：只做视觉（IgnorePointer），条目滚动经过时透出渐隐。
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: const VaultBottomScrim(),
+        ),
+        // 底部浮层：检索框（外置添加按钮，不并入检索框内），
+        // 直接压在渐隐遮罩之上。
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppSizes.pageEdge,
+                12,
+                AppSizes.pageEdge,
+                16,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: AppSizes.searchBarHeight,
+                      child: VaultField(
+                        controller: _search,
+                        hint: '检索',
+                        icon: Icons.search,
+                        compact: true,
+                        textInputAction: TextInputAction.search,
+                        onChanged: (v) => setState(() => _query = v),
+                        onSubmitted: () => FocusScope.of(context).unfocus(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.unit2),
+                  SizedBox(
+                    width: 94,
+                    child: _SearchAddChip(
+                      onTap: () => _openEdit(session, null),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -196,7 +292,7 @@ class _VaultScreenState extends State<VaultScreen> {
         return;
       } on VaultKeyMissingException catch (e) {
         // 引导输入缺失的二次加密条目密钥；取消则放弃本次切换。
-        final ok = await _promptMissingDoubleKey(session, e.entryName);
+        final ok = await promptMissingDoubleKey(context, session, e.entryName);
         if (!ok || !mounted) return;
       } on StateError catch (e) {
         if (mounted) showVaultBanner(context, e.message);
@@ -204,77 +300,6 @@ class _VaultScreenState extends State<VaultScreen> {
       } catch (_) {
         if (mounted) showVaultBanner(context, '保存失败');
         return;
-      }
-    }
-  }
-
-  /// 二次加密钥匙条目密钥缺失时，弹窗输入并验证缓存（DEVELOPMENT 17.13）。
-  /// 返回 true 表示已输入正确密钥，可重试份额重切。
-  Future<bool> _promptMissingDoubleKey(
-    VaultSession session,
-    String entryName,
-  ) async {
-    final entry = session.entries.where((e) => e.name == entryName).firstOrNull;
-    if (entry == null) return false;
-    final ctrl = TextEditingController();
-    String? error;
-    while (true) {
-      if (!mounted) {
-        ctrl.dispose();
-        return false;
-      }
-      final ok = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                '需要条目「$entryName」的加密密钥：'
-                '输入后即可重切份额（该条目为二次加密钥匙）。',
-                style: AppTextStyles.body,
-              ),
-              const SizedBox(height: AppSpacing.unit4),
-              VaultField(
-                controller: ctrl,
-                hint: '加密密钥',
-                mono: true,
-                obscure: true,
-                onSubmitted: () => Navigator.of(ctx).pop(true),
-              ),
-              if (error != null) ...[
-                const SizedBox(height: AppSpacing.unit2),
-                Text(error, style: AppTextStyles.bodySecondary),
-              ],
-            ],
-          ),
-          actions: [
-            VaultTextButton(
-              label: '取消',
-              onPressed: () => Navigator.of(ctx).pop(false),
-            ),
-            VaultTextButton(
-              label: '确认',
-              onPressed: () => Navigator.of(ctx).pop(true),
-            ),
-          ],
-        ),
-      );
-      final key = ctrl.text.trim();
-      ctrl.clear();
-      if (ok != true || key.isEmpty) {
-        ctrl.dispose();
-        return false;
-      }
-      try {
-        await session.unlockDoubleLock(entry, key);
-        ctrl.dispose();
-        return true;
-      } on StateError {
-        // 密钥不正确：关闭当前对话框，重新弹出让用户再输。
-        error = '加密密钥不正确';
-        if (!mounted) return false;
       }
     }
   }
@@ -289,50 +314,55 @@ class _VaultScreenState extends State<VaultScreen> {
     );
     if (mounted) setState(() {});
   }
-
-  void _openSettings(BuildContext context) {
-    FocusManager.instance.primaryFocus?.unfocus();
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-    );
-  }
-
-  void _openBackup(BuildContext context) {
-    FocusManager.instance.primaryFocus?.unfocus();
-    Navigator.of(
-      context,
-    ).push<void>(MaterialPageRoute<void>(builder: (_) => const BackupScreen()));
-  }
 }
 
-/// 顶部小导航按钮（覆盖层用）。
-class _TopNavButton extends StatelessWidget {
-  final String label;
-  final VoidCallback onPressed;
+/// 检索浮层右侧的「添加」胶囊：与设置按钮同样的布局风格、同宽。
+class _SearchAddChip extends StatelessWidget {
+  final VoidCallback onTap;
 
-  const _TopNavButton(this.label, this.onPressed);
+  const _SearchAddChip({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: AppSizes.navButtonHeight,
-      child: TextButton(
-        onPressed: onPressed,
-        style: TextButton.styleFrom(
-          // 与检索框同款边框背景；字体金色（DEVELOPMENT 8.13）。
-          foregroundColor: AppColors.gold,
-          backgroundColor: AppColors.surface,
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.unit4),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(AppRadius.button)),
-            side: const BorderSide(
-              color: AppColors.goldDim,
-              width: AppBorder.width,
+    return PillButton(
+      icon: Icons.add_rounded,
+      label: '添加',
+      highlight: true,
+      onTap: onTap,
+    );
+  }
+}
+
+/// 保险柜还没有任何条目时的空白态：两行克制引文。
+class _EmptyVaultState extends StatelessWidget {
+  const _EmptyVaultState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(16, 200, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '重要的，只交给自己。',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 24,
+              fontWeight: AppFontWeights.strong,
+              height: 1,
             ),
           ),
-          textStyle: AppTextStyles.buttonLabel,
-        ),
-        child: Text(label),
+          SizedBox(height: 20),
+          Text(
+            '这里不解释，只守口如瓶。',
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 20,
+              height: 1,
+            ),
+          ),
+        ],
       ),
     );
   }
