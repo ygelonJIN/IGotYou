@@ -12,6 +12,7 @@ import 'widgets/vault_banner.dart';
 import 'widgets/vault_bottom_scrim.dart';
 import 'widgets/vault_button.dart';
 import 'widgets/vault_field.dart';
+import 'widgets/vault_gate.dart';
 import 'widgets/vault_top_bar.dart';
 
 /// 条目编辑页：全屏表单，仅顶部关闭按钮。
@@ -39,8 +40,12 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
   late final TextEditingController _secretCtrl = TextEditingController(
     text: widget.entry?.secret,
   );
+  late final TextEditingController _gateCtrl = TextEditingController();
   late final FocusNode _nameFocus = FocusNode();
   late final FocusNode _secretFocus = FocusNode();
+
+  bool _gateReady = false;
+  bool _gateSubmitting = false;
 
   /// 内容多行框：一行一个输入框，末尾始终保留一个空框用于继续添加。
   late final List<TextEditingController> _noteCtrls = [];
@@ -77,6 +82,7 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
     context.read<AppState>().setBeforeLock(null);
     _nameCtrl.dispose();
     _secretCtrl.dispose();
+    _gateCtrl.dispose();
     _disposeNoteBoxes();
     _nameFocus.dispose();
     _secretFocus.dispose();
@@ -183,61 +189,57 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
   }
 
   /// 二次加密门禁：输入条目的加密密钥后才能查看内容。
-  Widget _buildGate(BuildContext context, double topInset) {
-    final ctrl = TextEditingController();
-    // 底部留白：与主页一致（contentBottomInset）。
-    final bottomInset = AppSizes.contentBottomInset;
+  /// 门面与保险柜解锁页同款（VaultGate 卡片）：SafeArea 后直接套 VaultGate
+  /// 垂直居中，卡片的位置/宽度/高度与解锁页一致（仅多一行条目名称）；
+  /// 条目名称仅显示不可编辑，进入编辑表单后才能修改。密钥验证通过后
+  /// 点击高亮「查看」进入编辑表单。
+  Widget _buildGate(BuildContext context) {
+    final entry = _liveEntry(widget.session);
     return Scaffold(
       body: PopScope(
         canPop: true,
         child: Stack(
           children: [
-            // 门禁表单（居中窄列，垂直居中）
+            // 门禁门面：与解锁页完全同款布局（SafeArea + VaultGate 垂直居中）。
             Positioned.fill(
               child: SafeArea(
-                top: false,
-                child: LayoutBuilder(
-                  builder: (context, viewport) => SingleChildScrollView(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minHeight: viewport.maxHeight,
+                child: VaultGate(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // 条目名称：仅显示，点击「查看」进入编辑页后才能修改。
+                      Text(
+                        entry.name,
+                        style: AppTextStyles.heading,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          AppSpacing.unit6,
-                          topInset,
-                          AppSpacing.unit6,
-                          bottomInset,
-                        ),
-                        child: Center(
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(
-                              maxWidth: AppSizes.gateMaxWidth,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                VaultField(
-                                  controller: ctrl,
-                                  hint: '加密密钥',
-                                  mono: true,
-                                  obscure: true,
-                                  icon: Icons.lock_outline,
-                                  textInputAction: TextInputAction.done,
-                                  onSubmitted: () => _tryUnlock(ctrl),
-                                ),
-                                const SizedBox(height: AppSizes.gateGap),
-                                VaultButton(
-                                  label: '查看',
-                                  height: AppSizes.heroButtonHeight,
-                                  onPressed: () => _tryUnlock(ctrl),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                      const SizedBox(height: AppSpacing.unit4),
+                      VaultField(
+                        controller: _gateCtrl,
+                        hint: '加密密钥',
+                        mono: true,
+                        obscure: true,
+                        icon: Icons.lock_outline,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: _submitGate,
+                        onChanged: (_) {
+                          // 盲输：提交后输入变化即取消已验证高亮。
+                          if (_gateReady) {
+                            setState(() => _gateReady = false);
+                          }
+                        },
                       ),
-                    ),
+                      const SizedBox(height: AppSizes.gateGap),
+                      VaultButton(
+                        label: '查看',
+                        height: AppSizes.heroButtonHeight,
+                        highlighted: _gateReady,
+                        onPressed: _gateReady ? _enterGate : null,
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -252,35 +254,61 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
                 onBack: _handleClose,
               ),
             ),
-            // 底部统一遮罩（与顶部渐变区对称）
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: const VaultBottomScrim(),
-            ),
           ],
         ),
       ),
     );
   }
 
-  Future<void> _tryUnlock(TextEditingController ctrl) async {
+  /// 门禁按键处理（输入框回车 / 点按查看按钮）。
+  /// 与首次解锁盲输同逻辑：提交后只推进引擎状态，不自动进入页面；
+  /// 按钮变为金色高亮，等待人工点击。
+  Future<void> _submitGate() async {
     final entry = _liveEntry(widget.session);
-    if (ctrl.text.trim().isEmpty) return;
+    final raw = _gateCtrl.text.trim();
+    if (raw.isEmpty || _gateSubmitting || _gateReady) return;
+    _gateCtrl.clear();
+    setState(() => _gateSubmitting = true);
     try {
-      final (secret, note) = await widget.session.unlockDoubleLock(
-        entry,
-        ctrl.text.trim(),
-      );
+      final ok = await widget.session.submitDoubleLock(entry, raw);
       if (!mounted) return;
-      ctrl.dispose();
+      if (ok) {
+        setState(() => _gateReady = true);
+      } else {
+        showVaultBanner(context, '加密密钥不正确');
+      }
+    } catch (_) {
+      if (mounted) showVaultBanner(context, '加密密钥不正确');
+    } finally {
+      if (mounted) setState(() => _gateSubmitting = false);
+    }
+  }
+
+  /// 人工点击高亮的「查看」按钮后进入编辑表单。
+  Future<void> _enterGate() async {
+    if (_gateSubmitting || !_gateReady) return;
+    setState(() => _gateSubmitting = true);
+    try {
+      final entry = _liveEntry(widget.session);
+      final unlocked = await widget.session.confirmDoubleLock(entry.id);
+      if (!mounted) return;
+      if (unlocked == null) {
+        showVaultBanner(context, '加密密钥不正确');
+        setState(() => _gateReady = false);
+        return;
+      }
+      final (secret, note) = unlocked;
       // 门禁通过：用明文填充表单（secret 需去掉 trim 副作用，保留原文）。
       _secretCtrl.text = secret;
       _resetNoteBoxes(note);
       setState(() => _unlocked = true);
-    } on StateError {
-      if (mounted) showVaultBanner(context, '加密密钥不正确');
+    } catch (_) {
+      if (mounted) {
+        showVaultBanner(context, '加密密钥不正确');
+        setState(() => _gateReady = false);
+      }
+    } finally {
+      if (mounted) setState(() => _gateSubmitting = false);
     }
   }
 
@@ -332,28 +360,43 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
     return true;
   }
 
-  /// 二次加密管理区：未开启 → "开启二次加密"；已开启 → 状态 + 修改/关闭。
-  Widget _buildDoubleLockSection(VaultSession session) {
+  /// 底部操作区：二次加密管理 + 删除，渲染在页面底部固定浮层上。
+  /// 未开启 → "开启二次加密" 与 "删除" 同一行各半；
+  /// 已开启 → "修改密钥" 单独一行，"关闭二次加密" 与 "删除" 同一行各半。
+  Widget _buildBottomActions(VaultSession session) {
     final entry = _liveEntry(session);
-    if (!entry.doubleLocked) {
-      return VaultButton(
-        label: '开启二次加密',
-        onPressed: () => _promptEnableDoubleLock(session),
-      );
-    }
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('已开启二次加密：查看需输入密钥', style: AppTextStyles.metaDim),
-        const SizedBox(height: AppSpacing.unit3),
-        VaultButton(
-          label: '修改密钥',
-          onPressed: () => _promptChangeDoubleKey(session),
-        ),
-        const SizedBox(height: AppSpacing.unit2),
-        VaultDangerButton(
-          label: '关闭二次加密',
-          onPressed: () => _promptDisableDoubleLock(session),
+        if (entry.doubleLocked) ...[
+          VaultButton(
+            label: '修改密钥',
+            onPressed: () => _promptChangeDoubleKey(session),
+          ),
+          const SizedBox(height: AppSpacing.unit2),
+        ],
+        Row(
+          children: [
+            Expanded(
+              child: entry.doubleLocked
+                  ? VaultDangerButton(
+                      label: '关闭二次加密',
+                      onPressed: () => _promptDisableDoubleLock(session),
+                    )
+                  : VaultButton(
+                      label: '开启二次加密',
+                      onPressed: () => _promptEnableDoubleLock(session),
+                    ),
+            ),
+            const SizedBox(width: AppSpacing.unit2),
+            Expanded(
+              child: VaultDangerButton(
+                label: '删除',
+                onPressed: () => _confirmDelete(session),
+              ),
+            ),
+          ],
         ),
       ],
     );
@@ -753,12 +796,14 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
     final needsGate =
         _isEdit && _liveEntry(session).doubleLocked && !_unlocked;
     if (needsGate) {
-      return _buildGate(context, topInset);
+      return _buildGate(context);
     }
 
     return Scaffold(
       body: PopScope(
-        canPop: _allowPop,
+        // 编辑态无未保存改动时可左滑返回（iOS 手势）；有改动/保存中则拦截，
+        // 由返回箭头/系统返回走 _handleClose 保存后退出，防止误触丢改动。
+        canPop: _isEdit ? _allowPop || (!_dirty && !_saving) : _allowPop,
         onPopInvokedWithResult: (didPop, _) {
           if (didPop) return;
           _handleClose();
@@ -844,15 +889,6 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
                                     onPressed: _createAndClose,
                                   ),
                                 ],
-                                if (_isEdit) ...[
-                                  const SizedBox(height: AppSpacing.unit6),
-                                  _buildDoubleLockSection(session),
-                                  const SizedBox(height: AppSpacing.unit6),
-                                  VaultDangerButton(
-                                    label: '删除',
-                                    onPressed: () => _confirmDelete(session),
-                                  ),
-                                ],
                               ],
                             ),
                           ),
@@ -880,6 +916,26 @@ class _EntryEditScreenState extends State<EntryEditScreen> {
               right: 0,
               child: const VaultBottomScrim(),
             ),
+            // 底部操作浮层（查看模式）：二次加密管理 + 删除，
+            // 与主页检索框同一位置、压在遮罩之上，不随内容滚动。
+            if (_isEdit)
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      AppSizes.pageEdge,
+                      AppSpacing.unit3,
+                      AppSizes.pageEdge,
+                      AppSpacing.unit4,
+                    ),
+                    child: _buildBottomActions(session),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

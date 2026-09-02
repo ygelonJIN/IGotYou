@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import '../crypto/aes_gcm.dart';
 import '../crypto/argon2.dart';
 import '../crypto/keychain.dart';
 import '../file/vault_file.dart';
@@ -17,12 +18,14 @@ class UnlockSubmitResult {
   final bool success; // 打开成功
   final bool failed; // 打开失败（本轮机会耗尽，进入冷却）
   final bool rejected; // 提交被拒绝（冷却中）
+  final bool needsRepair; // 份额所在多项式阶数 > 当前 K，需继续输入更多钥匙口令
 
   const UnlockSubmitResult({
     required this.hit,
     required this.success,
     required this.failed,
     required this.rejected,
+    this.needsRepair = false,
   });
 
   static const UnlockSubmitResult rejectedResult = UnlockSubmitResult(
@@ -45,6 +48,10 @@ class UnlockEngine {
 
   final Set<String> _hitValues = {}; // 已命中的不同规范化值（去重）
   final List<({ShareRecord share, Uint8List y})> _hitShares = [];
+
+  /// 本轮命中份额对应条目 id → 规范化口令。与命中记录同生命周期：
+  /// 打开成功后供会话缓存二次加密钥匙口令（自动修复份额，17.20）。
+  final Map<String, String> _hitPasswords = {};
   Uint8List? _mk;
 
   UnlockEngine({required this.data, required this.statePath})
@@ -64,6 +71,13 @@ class UnlockEngine {
   /// K=1 时恒为 false——任何命中即打开。
   bool get isLastStep => config.hitCount > 1 && hitsToOpen <= 1;
 
+  /// 是否经由存量库份额修复路径打开（累计命中数 > K）：份额所在多项式
+  /// 阶数高于当前 K。打开后会话应标记下次保存全量重切（17.18）。
+  bool get repairedShares => _hitShares.length > config.hitCount;
+
+  /// 本轮命中份额对应条目 → 规范化口令（只含本次打开会话中的命中）。
+  Map<String, String> get hitPasswords => Map.unmodifiable(_hitPasswords);
+
   /// 从库外状态文件加载尝试状态；文件丢失视为满血（DEVELOPMENT 4.4）。
   Future<void> loadState() async {
     state = await AttemptState.load(statePath, config);
@@ -78,6 +92,7 @@ class UnlockEngine {
   void _resetRound() {
     _hitValues.clear();
     _hitShares.clear();
+    _hitPasswords.clear();
   }
 
   /// 盲输提交一个值。返回结果并推进状态机（DEVELOPMENT 11）。
@@ -94,28 +109,46 @@ class UnlockEngine {
 
     final normalized = normalizeSecret(raw);
     final kek = await deriver.derive(normalized);
-    final found = await _findHitShare(kek);
+    final hits = await _findHitShares(kek);
 
     var hit = false;
-    if (found != null) {
-      // 按值去重：不同值才计命中。
-      if (_hitValues.add(normalized)) {
-        _hitShares.add(found);
+    for (final h in hits) {
+      // 记录命中口令 → 条目：同一口令命中多份额时全部记录（供自动修复）。
+      _hitPasswords[h.share.entryId] = normalized;
+      // 按值去重：同一值只计一次命中、只取第一个份额点。
+      if (!hit && _hitValues.add(normalized)) {
+        _hitShares.add(h);
         hit = true;
       }
     }
 
     final k = config.hitCount;
     if (_hitValues.length >= k) {
-      // 打开成功 → 全部重置（DEVELOPMENT 4.2）。
-      _mk = await _reconstructMk();
-      state.reset(config);
+      // 份额达阈值：先验证重构出的 MK 能否真正解密 BODY。
+      // 检测到旧版本落盘的存量库（份额多项式阶数 > 当前 K）时不立即声明成功，
+      // 而是保留已累积的份额、继续接受更多钥匙口令——D+1 个不同份额通过
+      // Lagrange 插值可在更高阶多项式上恢复正确的 MK（DEVELOPMENT 17.15）。
+      final mk = await _reconstructMk();
+      if (await _verifyMk(mk)) {
+        _mk = mk;
+        state.reset(config);
+        _saveState();
+        return UnlockSubmitResult(
+          hit: hit,
+          success: true,
+          failed: false,
+          rejected: false,
+        );
+      }
+      // MK 无效（存量库份额多项式阶数 > K）：保留本次命中份额，
+      // 继续接受更多钥匙口令；告诉 UI 需要更多钥匙来修复份额。
       _saveState();
       return UnlockSubmitResult(
         hit: hit,
-        success: true,
+        success: false,
         failed: false,
         rejected: false,
+        needsRepair: true,
       );
     }
 
@@ -141,20 +174,36 @@ class UnlockEngine {
     );
   }
 
-  /// 用派生出的 KEK 尝试解密份额，返回第一个解开（命中）的份额及其 y 值。
-  /// 多个条目内容相同时一次输入只取一份（去重规则，DEVELOPMENT 3.3）。
-  Future<({ShareRecord share, Uint8List y})?> _findHitShare(SecretKey kek) async {
+  /// 用派生出的 KEK 尝试解密全部份额，返回所有解开（命中）的份额及其 y 值。
+  /// 多个条目共用同一口令时一次输入会解开多份，全部返回供口令记录
+  /// （命中计数仍按值去重，见 [submit]）。
+  Future<List<({ShareRecord share, Uint8List y})>> _findHitShares(
+    SecretKey kek,
+  ) async {
+    final result = <({ShareRecord share, Uint8List y})>[];
     for (final share in data.shares) {
       final y = await Keychain.tryDecryptShare(share, kek);
-      if (y != null) return (share: share, y: y);
+      if (y != null) result.add((share: share, y: y));
     }
-    return null;
+    return result;
   }
 
   Future<Uint8List> _reconstructMk() async {
     final shares = _hitShares.map((e) => e.share).toList();
     final ys = _hitShares.map((e) => e.y).toList();
     return Keychain.reconstructMk(shares, ys: ys);
+  }
+
+  /// 用重构出的 MK 尝试解密 BODY，验证其有效性。
+  /// 文件损坏（BODY 密文被篡改）或份额多项式不匹配时返回 false。
+  Future<bool> _verifyMk(Uint8List mk) async {
+    try {
+      final bodyCipher = await VaultFile.readBody(data);
+      await AesGcmCipher().decrypt(bodyCipher, SecretKeyData(mk));
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// 锁定：清空 MK 与命中记录；机会与冷却状态保留（DEVELOPMENT 3.5）。

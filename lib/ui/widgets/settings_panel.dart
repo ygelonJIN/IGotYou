@@ -6,6 +6,7 @@ import '../../core/models/vault_config.dart';
 import '../../core/vault_session.dart';
 import '../../theme/tokens.dart';
 import '../backup_screen.dart';
+import 'missing_key_prompt.dart';
 import 'pill_button.dart';
 import 'vault_banner.dart';
 import 'vault_button.dart';
@@ -150,7 +151,28 @@ class _SettingsPanelState extends State<SettingsPanel> {
     }
     _saving = true;
     try {
-      await session.save();
+      // 份额重切需要全部钥匙明文口令；二次加密钥匙未查看（密钥未缓存）时
+      // 保存会抛 VaultKeyMissingException——弹窗输入并自动重试（与编辑页
+      // _saveWithMissingKeys 同逻辑），而不是只报"保存失败"。
+      var saved = false;
+      for (var attempt = 0; attempt < 8 && !saved; attempt++) {
+        try {
+          await session.save();
+          saved = true;
+        } on VaultKeyMissingException catch (e) {
+          if (!mounted) return false;
+          final ok = await promptMissingDoubleKey(
+            context,
+            session,
+            e.entryName,
+          );
+          if (!ok || !mounted) return false;
+        }
+      }
+      if (!saved) {
+        if (mounted) _banner('保存失败');
+        return false;
+      }
       if (mounted) setState(() => _dirty = false);
       return true;
     } catch (_) {
@@ -388,6 +410,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
                           await app.beforeLock?.call();
                           if (!context.mounted) return;
                           await app.lock();
+                          if (!context.mounted) return;
                           Navigator.of(context).popUntil((r) => r.isFirst);
                         },
                       ),
@@ -449,30 +472,6 @@ class _SettingsPanelState extends State<SettingsPanel> {
       ),
     );
   }
-
-  /// 顶部渐隐：与面板 `surface` 同色，从实心平滑淡出（无其它颜色色带）。
-  static final LinearGradient _surfaceTopScrim = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [
-      AppColors.surface.withValues(alpha: 1),
-      AppColors.surface.withValues(alpha: 0.92),
-      AppColors.surface.withValues(alpha: 0),
-    ],
-    stops: const [0.0, 0.6, 1.0],
-  );
-
-  /// 底部渐隐：与面板 `surface` 同色，从实心平滑淡出。
-  static final LinearGradient _surfaceBottomScrim = LinearGradient(
-    begin: Alignment.bottomCenter,
-    end: Alignment.topCenter,
-    colors: [
-      AppColors.surface.withValues(alpha: 1),
-      AppColors.surface.withValues(alpha: 0.92),
-      AppColors.surface.withValues(alpha: 0),
-    ],
-    stops: const [0.0, 0.6, 1.0],
-  );
 
   /// 字段标签 / 小字备注（统一小字样式）。
   Widget _label(String text) {

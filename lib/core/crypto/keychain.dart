@@ -18,6 +18,9 @@ class Keychain {
   static final AesGcmCipher _aesGcm = AesGcmCipher();
   static final Random _rng = Random.secure();
 
+  /// 结构密钥派生标签（与文件 magic 绑定，避免跨用途误用）。
+  static const String _structureKeyLabel = 'IGOTYOU1:structure:v1';
+
   /// 生成 256-bit 随机主密钥 MK。
   static Uint8List generateMk() {
     final bytes = Uint8List(32);
@@ -25,6 +28,48 @@ class Keychain {
       bytes[i] = _rng.nextInt(256);
     }
     return bytes;
+  }
+
+  /// 维护层结构密钥 SK（方案三 17.20）：从 MK 确定性派生、可恢复的维护凭证。
+  /// 解锁成功（MK 在手）即可重新派生，无需用户记忆额外密码；
+  /// 未解锁/文件被盗者拿不到 MK ⇒ 也拿不到 SK，封套内容不可解。
+  static Future<Uint8List> structureKey(Uint8List mk) async {
+    final mac = await Hmac.sha256().calculateMac(
+      ascii.encode(_structureKeyLabel),
+      secretKey: SecretKeyData(mk),
+    );
+    return Uint8List.fromList(mac.bytes);
+  }
+
+  /// 口令封套：AES-GCM(SK, 规范化口令)，返回 base64（存于 BODY 结构块）。
+  static Future<String> wrapStructurePassword(
+    Uint8List sk,
+    String normalizedPassword,
+  ) async {
+    final box = await _aesGcm.encryptBytes(
+      Uint8List.fromList(utf8.encode(normalizedPassword)),
+      SecretKeyData(sk),
+    );
+    final concat = Uint8List.fromList([
+      ...box.nonce,
+      ...box.cipherText,
+      ...box.mac.bytes,
+    ]);
+    return base64Encode(concat);
+  }
+
+  /// 解开口令封套；封套损坏（密钥不符/篡改）返回 null，不抛异常。
+  static Future<String?> unwrapStructurePassword(
+    Uint8List sk,
+    String envelope,
+  ) async {
+    try {
+      final box = AesGcmCipher.boxFromConcat(base64Decode(envelope));
+      final bytes = await _aesGcm.decryptBytes(box, SecretKeyData(sk));
+      return utf8.decode(bytes);
+    } catch (_) {
+      return null;
+    }
   }
 
   /// 条目身份的 128-bit 确定性 x 坐标：SHA-256(entryId) 高 16 字节。
@@ -73,21 +118,30 @@ class Keychain {
       final keySecret = keyFor?.call(keyEntries[i]) ?? keyEntries[i].secret;
       final kek = await deriver.derive(normalizeSecret(keySecret));
       final box = await _aesGcm.encryptBytes(yBytes, kek);
-      shares.add(ShareRecord(
-        entryId: keyEntries[i].id,
-        x: xsOrdered[i],
-        nonce: Uint8List.fromList(box.nonce),
-        cipher: Uint8List.fromList([...box.cipherText, ...box.mac.bytes]),
-      ));
+      shares.add(
+        ShareRecord(
+          entryId: keyEntries[i].id,
+          x: xsOrdered[i],
+          nonce: Uint8List.fromList(box.nonce),
+          cipher: Uint8List.fromList([...box.cipherText, ...box.mac.bytes]),
+        ),
+      );
     }
     return shares;
   }
 
   /// 用派生出的 [kek] 尝试解密一份份额；成功返回 32 字节 y，失败返回 null。
-  static Future<Uint8List?> tryDecryptShare(ShareRecord share, SecretKey kek) async {
+  static Future<Uint8List?> tryDecryptShare(
+    ShareRecord share,
+    SecretKey kek,
+  ) async {
     try {
       final concat = Uint8List.fromList([...share.nonce, ...share.cipher]);
-      final box = SecretBox.fromConcatenation(concat, nonceLength: 12, macLength: 16);
+      final box = SecretBox.fromConcatenation(
+        concat,
+        nonceLength: 12,
+        macLength: 16,
+      );
       return await _aesGcm.decryptBytes(box, kek);
     } catch (_) {
       return null;

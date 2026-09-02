@@ -251,6 +251,9 @@ class _UnlockScreenState extends State<UnlockScreen> {
       if (!mounted || !context.mounted) return;
       if (result.success) {
         _showMessage('打开成功');
+      } else if (result.needsRepair) {
+        // 份额多项式阶数 > 当前 K（存量库）：静默继续，不显示任何提示——
+        // 盲输原则（3.4）禁止泄露命中信息；引擎会继续累积份额直到 MK 验证通过。
       } else if (result.failed) {
         _showMessage('打开失败');
       } else if (result.rejected) {
@@ -270,7 +273,11 @@ class _UnlockScreenState extends State<UnlockScreen> {
     setState(() => _entering = true);
     try {
       final app = context.read<AppState>();
-      await app.unlockWith(engine.takeMk());
+      await app.unlockWith(
+        engine.takeMk(),
+        repairShares: engine.repairedShares,
+        hitPasswords: engine.hitPasswords,
+      );
     } catch (_) {
       if (mounted) _showMessage('打开失败');
     } finally {

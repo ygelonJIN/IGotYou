@@ -102,13 +102,30 @@ class AppState extends ChangeNotifier {
   Future<UnlockSubmitResult> submit(String value) => _engine!.submit(value);
 
   /// 打开成功：用重构出的 MK 打开会话，清空引擎内存。
-  Future<VaultSession> unlockWith(Uint8List mk) async {
+  /// [repairShares] 为 true 表示本次经存量库修复路径打开（命中数 > K）：
+  /// 会话自动缓存本轮命中口令、标记重切，并立即尽力重切落盘——份额与
+  /// 当前 K 从此一致，下次解锁按设置即可（17.18/17.20）。
+  Future<VaultSession> unlockWith(
+    Uint8List mk, {
+    bool repairShares = false,
+    Map<String, String> hitPasswords = const {},
+  }) async {
     final data = await VaultFile.read(_vaultPath!);
     final session = await VaultSession.open(
       path: _vaultPath!,
       fileData: data,
       mk: mk,
     );
+    if (repairShares) {
+      await session.seedDoubleKeys(hitPasswords);
+      session.markSharesForResplit();
+      try {
+        await session.save(); // 全量重切（K 份份额）+ 落盘，一次性修复
+      } on VaultKeyMissingException {
+        // 仍有二次加密钥匙明文缺失：保持标记，进库后任意一次保存会补齐
+        //（settings/entry 保存的缺口令弹窗流程，17.19）。
+      }
+    }
     _session = session;
     _engine = null;
     notifyListeners();

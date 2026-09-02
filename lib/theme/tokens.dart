@@ -244,14 +244,14 @@ class AppSizes {
   static const double contentTopInset = 140; // 首条目距顶（自屏幕顶端固定）
   static const double contentBottomInset = 236; // 内容底部留白
   static const double topScrimHeight = 170; // 顶部遮罩高（固定，不含安全区）
-  static const double bottomScrimHeight = 180; // 底部遮罩高（不含底部安全区）
+  static const double bottomScrimHeight = 160; // 底部遮罩高（不含底部安全区）
   static const double topChromeInset = 8; // 顶栏胶囊距顶
 
   // 设置侧栏（侧滑面板，surface 同色遮罩，独立于整页模板）
   static const double settingsTopInset = 80; // 内容顶部 = 状态栏 + 80
   static const double settingsBottomInset = 150; // 内容底部 = 安全区 + 150
   static const double settingsTopScrim = 150; // 顶部遮罩高
-  static const double settingsBottomScrim = 220; // 底部遮罩高
+  static const double settingsBottomScrim = 200; // 底部遮罩高
 
   // 全局上锁按钮距底（加号上方：16 底边距 + 44 加号高 + 8 间距）
   static const double lockButtonBottomOffset = 72;
