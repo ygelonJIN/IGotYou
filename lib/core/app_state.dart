@@ -146,14 +146,35 @@ class AppState extends ChangeNotifier {
   /// 导入备份：用外部 .igotyou 替换当前库文件（DEVELOPMENT 8.7）。
   /// 成功后重建引擎，等待盲输解锁。
   Future<void> importVault(File source) async {
-    // 校验 magic/版本（抛异常即文件损坏）。
+    final target = File(_vaultPath!);
+    final temp = File('${_vaultPath!}.import.tmp');
+    final backup = File('${_vaultPath!}.import.backup');
     await VaultFile.read(source.path);
-    if (source.path != _vaultPath) {
-      await source.copy(_vaultPath!);
+    if (source.path == target.path) return;
+    try {
+      if (await temp.exists()) await temp.delete();
+      if (await backup.exists()) await backup.delete();
+      await source.copy(temp.path);
+      await VaultFile.read(temp.path);
+      final hadTarget = await target.exists();
+      if (hadTarget) await target.rename(backup.path);
+      try {
+        await temp.rename(target.path);
+        await VaultFile.read(target.path);
+        await _prepareEngine();
+      } catch (_) {
+        if (await target.exists()) await target.delete();
+        if (hadTarget && await backup.exists()) await backup.rename(target.path);
+        rethrow;
+      }
+      if (await backup.exists()) await backup.delete();
+      _session?.lock();
+      _session = null;
+      notifyListeners();
+    } catch (_) {
+      if (await temp.exists()) await temp.delete();
+      rethrow;
     }
-    _session = null;
-    await _prepareEngine();
-    notifyListeners();
   }
 
   /// 清空保险柜（DEVELOPMENT 8.6）：删除库文件与尝试状态文件，

@@ -55,7 +55,13 @@ class Shamir {
   /// 将 32 字节 MK 拆为 N 份，阈值 K。
   /// [xs] 为各份额的 x 坐标（已去重、非零、<p），长度 N。
   static List<BigInt> split(BigInt secret, int k, List<BigInt> xs) {
-    assert(k >= 1 && k <= xs.length);
+    _validatePoints(xs);
+    if (k < 1 || k > xs.length) {
+      throw ArgumentError('invalid Shamir threshold');
+    }
+    if (secret.isNegative || secret >= primeP) {
+      throw ArgumentError('secret out of field range');
+    }
     final rnd = Random.secure();
     final coeff = <BigInt>[secret];
     for (var i = 1; i < k; i++) {
@@ -71,7 +77,13 @@ class Shamir {
   /// 用 K 份 (xs, ys) 在 [targetX] 处求 Lagrange 插值（域上多项式求值）。
   /// [targetX] 为 0 时即重构主密钥，见 [reconstruct]。
   static BigInt evaluateAt(List<BigInt> xs, List<BigInt> ys, BigInt targetX) {
-    assert(xs.length == ys.length && xs.isNotEmpty);
+    if (xs.length != ys.length || xs.isEmpty) {
+      throw ArgumentError('invalid Shamir points');
+    }
+    _validatePoints(xs);
+    if (ys.any((y) => y.isNegative || y >= primeP)) {
+      throw ArgumentError('share value out of field range');
+    }
     final k = xs.length;
     var result = BigInt.zero;
     for (var i = 0; i < k; i++) {
@@ -91,6 +103,15 @@ class Shamir {
   /// 用 K 份 (xs, ys) 重构秘密（Lagrange 插值于 0）。
   static BigInt reconstruct(List<BigInt> xs, List<BigInt> ys) =>
       evaluateAt(xs, ys, BigInt.zero);
+
+  static void _validatePoints(List<BigInt> xs) {
+    final seen = <BigInt>{};
+    for (final x in xs) {
+      if (x <= BigInt.zero || x >= primeP || !seen.add(x)) {
+        throw ArgumentError('invalid Shamir x coordinate');
+      }
+    }
+  }
 
   static BigInt _bytesToBigInt(Uint8List bytes) {
     var v = BigInt.zero;

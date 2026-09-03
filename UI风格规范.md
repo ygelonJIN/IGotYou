@@ -31,6 +31,7 @@
 | `goldDim` | `0xFFB09B74` | 弱化金：辅助文字 / 弱化描边 |
 | `textPrimary` | `0xFFF2E9D6` | 正文（浅米白） |
 | `textSecondary` | `0xFFB09B74` | 次级文字 / 占位 |
+| `keyOff` | `0xFF6F6B60` | 钥匙"关"图标色（比次级文字更灰） |
 | `onGold` | `0xFF241C07` | gold 底上的前景文字 |
 
 ### 规则
@@ -74,24 +75,25 @@ Stack
 ### 5.1 保险柜主页（`vault_screen.dart`）
 
 1. 背景色铺满全屏
-2. 中央为条目卡片流（全屏滚动），列表上下内边距与 SoWhat 首个分析卡一致
-   （`EdgeInsets.fromLTRB(16, 118, 16, 236)`）
-3. 顶部左侧「设置」胶囊（`PillButton` 高亮态）
+2. 中央为条目卡片流（全屏滚动），列表上下内边距统一为
+   `EdgeInsets.fromLTRB(16, 140, 16, 236)`（`contentTopInset` / `contentBottomInset`）
+3. 顶部左侧「设置」胶囊（`PillButton` 高亮态），右上角为全局「上锁」胶囊
+   （`VaultLockButtonOverlay`，与「设置」同一水平线）
 4. 底部为检索输入条 + **独立在检索框之外**的「添加」金色方形按钮
-   （`_SearchAddChip`，不并入输入框）
-5. 空态为两行克制引文（无英文）
+   （`_SearchAddChip`，宽 94，不并入输入框）
+5. 空态为两行克制引文（无英文，24/20 号字）
 
 ### 5.2 设置页：左侧滑入侧栏（`settings_panel.dart`）
 
 设置页不是 push 的新页面，而是从左侧滑入的侧栏：
 
-- 宽度占页面约 70%，**通栏满高**（阴影从顶到底无缝，不套 SafeArea）
-- 主页右移，仅保留左侧约 30% 可见（被黑色遮罩盖住，点击遮罩收起）
+- 宽度占页面 **75%**（`width * 0.75`），**通栏满高**（阴影从顶到底无缝，不套 SafeArea）
+- 主页右移 `settingsWidth`（75% 屏宽），仅主页右端约 25% 露在遮罩后（点击遮罩收起）
 - 动画 340ms `easeOutCubic`
-- 顶部**只有标题「设置」**（米白大字）——无返回箭头、无上锁按钮；
+- 顶部**只有标题「设置」**（米白大字）+ 右上角上锁胶囊（宽 94）——无返回箭头；
   收起方式 = 点击遮罩 / 系统返回键
-- 顶部与底部渐隐遮罩**与面板同色**（`surface`），不出现其它颜色色带
-- 底部固定工具区（备份 / 清空保险柜）悬浮在 surface 同色渐隐之上
+- 顶部与底部渐隐遮罩**与面板同色**（`surface`，`surfaceTopScrim` / `surfaceBottomScrim`），不出现其它颜色色带
+- 底部固定工具区（备份 / 重置）悬浮在 surface 同色渐隐之上
 
 ### 5.3 二级页面（条目编辑 / 备份）
 
@@ -104,8 +106,10 @@ Stack
 ### 5.4 全局上锁按钮（`widgets/vault_lock_button.dart`）
 
 - 由 `MaterialApp.builder` 在导航器外层渲染**一次**，全应用共用、永远存在
-- 固定**右下角**：右缘 16，下缘 = 键盘高度 / 底部安全区 + 64（加号按钮上方）
-- 直接压在底部遮罩之上（不改遮罩高度、不改内容留白）
+- 固定**右上角**：右缘 `pageEdge` 16，上缘 = 状态栏 + `topChromeInset` 8
+  （与主页顶部「设置」胶囊同一水平线）
+- 样式与「设置」胶囊一致（`PillButton` 高亮态）；设置侧栏展开时隐藏
+  （侧栏内右上角自带同款上锁胶囊）
 - 只在已解锁时显示；点击：失焦（触发页面自动保存）→ 等待页面注册的
   `beforeLock`（编辑页/设置页）→ 锁定 → 收起所有二级路由回到根页
 
@@ -158,9 +162,9 @@ Stack
 - 顶部：从背景色逐渐透明（内容滚到浮层下时淡出）
 - 底部：从背景色逐渐透明
 - 各页遮罩/留白数值（px，均以屏幕顶端/底端为基准）：
-  - 主页：首个条目距顶 **140**；顶部遮罩 **170**；底部遮罩 **180** + 底部安全区；内容底部留白 **236**
-  - 设置侧栏：内容顶部 **状态栏 + 80**；顶部遮罩 **170**（surface 同色）；底部遮罩 **200**（surface 同色）；内容底部 **安全区 + 150**
-  - 二级页（查看/添加/备份）：首条目距顶 **140**（与主页一致，`VaultTopBar.totalHeight`）；顶部遮罩 **状态栏 + 200**（`VaultTopBar.totalScrimHeight`）；底部遮罩 **安全区 + 140**（`VaultBottomScrim(height: 140)`）；内容底部与底部遮罩同高
+  - 主页：首个条目距顶 **140**；顶部遮罩 **170**；底部遮罩 **160** + 底部安全区；内容底部留白 **236**
+  - 设置侧栏：内容顶部 **状态栏 + 80**；顶部遮罩 **150**（surface 同色）；底部遮罩 **200**（surface 同色）；内容底部 **安全区 + 150**
+  - 二级页（查看/添加/备份）：首条目距顶 **140**（与主页一致，`VaultTopBar.totalHeight`）；顶部遮罩 **170**（`VaultTopBar.totalScrimHeight`）；底部遮罩 **安全区 + 160**（`VaultBottomScrim.totalHeight`）；内容底部留白与主页一致 **236**
 
 ---
 
@@ -209,15 +213,16 @@ Stack
 | `lib/theme/tokens.dart` | 色彩 / 字号 / 字重 / 文本样式 / 间距 / 圆角 / 渐变 / 时长 / 阴影 / 尺寸令牌 |
 | `lib/theme/theme.dart` | `buildVaultTheme()`：全局 ThemeData（含唯一字体） |
 | `lib/ui/widgets/pill_button.dart` | 胶囊按钮 |
-| `lib/ui/widgets/vault_lock_button.dart` | 全局上锁按钮（右下角悬浮层） |
+| `lib/ui/widgets/vault_lock_button.dart` | 全局上锁按钮（右上角悬浮层） |
 | `lib/ui/widgets/vault_button.dart` | 主 / 危险 / 文字按钮 |
 | `lib/ui/widgets/vault_field.dart` | 输入框（含检索条 `VaultSearchBar`） |
 | `lib/ui/widgets/vault_entry_tile.dart` | 条目行卡片 |
-| `lib/ui/widgets/vault_gate.dart` | 解锁 / 创建门面 |
+| `lib/ui/widgets/vault_gate.dart` | 解锁 / 创建 / 二次加密门面 |
 | `lib/ui/widgets/vault_top_bar.dart` | 二级页顶部浮层 |
 | `lib/ui/widgets/vault_bottom_scrim.dart` | 底部渐隐遮罩 |
 | `lib/ui/widgets/vault_banner.dart` | 全局提示横幅 |
 | `lib/ui/widgets/settings_panel.dart` | 设置侧栏（滑入面板） |
+| `lib/ui/widgets/missing_key_prompt.dart` | 二次加密钥匙明文缺失输入弹窗 |
 | `lib/ui/vault_screen.dart` | 主页：全屏列表 + 浮层 + 侧栏容器 |
 | `lib/ui/unlock_screen.dart` | 解锁 / 首次创建 |
 | `lib/ui/entry_edit_screen.dart` | 条目编辑（含二次加密门禁） |

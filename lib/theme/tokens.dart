@@ -26,7 +26,6 @@ class AppFontSizes {
   static const double body = 14;
   static const double meta = 12;
   static const double mono = 14;
-  static const double titleSpacing = 4;
 }
 
 class AppFontWeights {
@@ -45,13 +44,6 @@ class AppFontFamilies {
 /// 页面 / 组件**禁止自行组装** `TextStyle`，一律引用这里的组合样式。
 class AppTextStyles {
   AppTextStyles._();
-
-  static const TextStyle wordmark = TextStyle(
-    fontSize: AppFontSizes.title,
-    fontWeight: AppFontWeights.strong,
-    color: AppColors.gold,
-    letterSpacing: AppFontSizes.titleSpacing,
-  );
 
   /// 页面大标题（米白正文色，金色留给强调元素）。
   static const TextStyle title = TextStyle(
@@ -163,13 +155,6 @@ class AppBorder {
 class AppGradients {
   AppGradients._();
 
-  static const LinearGradient gateMetal = LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [AppColors.surfaceAlt, AppColors.surface, AppColors.bg],
-    stops: [0.0, 0.55, 1.0],
-  );
-
   static const LinearGradient topScrim = LinearGradient(
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
@@ -253,22 +238,13 @@ class AppSizes {
   static const double settingsTopScrim = 150; // 顶部遮罩高
   static const double settingsBottomScrim = 200; // 底部遮罩高
 
-  // 全局上锁按钮距底（加号上方：16 底边距 + 44 加号高 + 8 间距）
-  static const double lockButtonBottomOffset = 72;
-
   static const double buttonHeight = 48;
   static const double heroButtonHeight = 56;
-  static const double inputHeight = 48;
   static const double searchBarHeight = 44;
   static const double iconSize = 18;
   static const double fieldPrefixWidth = 40;
   static const double fieldPrefixWidthCompact = 32;
-  static const double navButtonHeight = 34;
-  static const double navIconButtonSize = 40;
-  static const double topBarHeight = 48;
-  static const double topBarIconSize = 24;
   static const double topBarLeadingWidth = 48;
-  static const double scrimFade = 48;
   static const double bannerMaxWidth = 480;
   static const double tileGap = 8;
   static const double tileKeyWidth = 56;

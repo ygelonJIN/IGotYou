@@ -694,29 +694,56 @@ class VaultSession extends ChangeNotifier {
   Future<void> save() async {
     // 清理孤儿封套：已删除/已关闭二次加密的条目封套不随落盘残留。
     final alive = entries.where((e) => e.doubleLocked).map((e) => e.id).toSet();
-    _structure.keyEnvelopes.removeWhere((id, _) => !alive.contains(id));
-    _structureKeys.removeWhere((id, _) => !alive.contains(id));
-    if (_sharesDirty || _shares.length != keyEntries.length) {
-      await _resplitShares();
-    }
-    final bodyJson = jsonEncode(
-      VaultBody(
-        entries: entries,
-        config: config,
-        structure: _structure,
-      ).toJson(),
+    final oldShares = _shares;
+    final oldShareIds = _sharesKeyIds;
+    final oldSharesThreshold = _sharesThreshold;
+    final oldSharesSecretDirty = _sharesSecretDirty;
+    final oldStructure = _structure;
+    final oldStructureEnvelopes = Map<String, String>.from(
+      _structure.keyEnvelopes,
     );
-    final body = await _aes.encrypt(bodyJson, SecretKeyData(mk));
+    final oldStructureKeys = Map<String, String>.from(_structureKeys);
+    try {
+      // 结构块清理也属于本次事务，失败时必须恢复。
+      _structure.keyEnvelopes.removeWhere(
+        (id, _) => !alive.contains(id),
+      );
+      _structureKeys.removeWhere((id, _) => !alive.contains(id));
+      if (_sharesDirty || _shares.length != keyEntries.length) {
+        await _resplitShares();
+      }
+      final bodyJson = jsonEncode(
+        VaultBody(
+          entries: entries,
+          config: config,
+          structure: _structure,
+        ).toJson(),
+      );
+      final body = await _aes.encrypt(bodyJson, SecretKeyData(mk));
 
-    final header = VaultHeader(
-      version: vaultFileVersion,
-      argonParams: fileData.header.argonParams,
-      salt: fileData.header.salt,
-      config: config, // 镜像同步（DEVELOPMENT 7.1）
-    );
-    await VaultFile.write(path, header: header, shares: _shares, body: body);
-    _sharesDirty = false;
-    notifyListeners();
+      final header = VaultHeader(
+        version: vaultFileVersion,
+        argonParams: fileData.header.argonParams,
+        salt: fileData.header.salt,
+        config: config, // 镜像同步（DEVELOPMENT 7.1）
+      );
+      await VaultFile.write(path, header: header, shares: _shares, body: body);
+      _sharesDirty = false;
+      notifyListeners();
+    } catch (_) {
+      _shares = oldShares;
+      _sharesKeyIds = oldShareIds;
+      _sharesThreshold = oldSharesThreshold;
+      _sharesSecretDirty = oldSharesSecretDirty;
+      _structure = oldStructure;
+      _structure.keyEnvelopes
+        ..clear()
+        ..addAll(oldStructureEnvelopes);
+      _structureKeys
+        ..clear()
+        ..addAll(oldStructureKeys);
+      rethrow;
+    }
   }
 
   List<ShareRecord> _shares = [];

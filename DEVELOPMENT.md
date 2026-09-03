@@ -1,8 +1,9 @@
 # IGotYou · 电子密码库 · 开发文档
 
-> 版本：v1.0（2026-08-30）
+> 版本：v1.1（2026-09-03）
 > 状态：设计定稿，作为后续全部开发的唯一基准。
 > 本文档之后的所有代码、UI、行为，一律以本文档为准；如有变更需求，先改文档，再改代码。
+> v1.1：UI 规范全面以代码现状对齐（见 17.21）；删除废弃 iOS 原生迁移方案（见 1.3）。
 
 ---
 
@@ -27,6 +28,7 @@
 - 无云同步、无账号系统、无网络请求。
 - 不引入任何装饰性图标与图形；仅允许 Material 内置**功能性图标**（输入框前缀：锁/钥匙/标签/备注/搜索；列表条目钥匙开关：钥匙），尺寸与颜色一律走 token（见 9.5）。
 - 不做多因子（手表/文件/面容/指纹）——本期只做多口令，架构预留扩展（见第 14 章）。
+- **不做 iOS 原生迁移**（2026-09-03 定稿）：维持 Flutter 双端（Android + iOS）单代码库路线，跨端逻辑一致、免二次实现。原 `IOS_NATIVE_MIGRATION_PLAN.md`（Swift/SwiftUI 重写方案）已废弃删除，相关第 14 章"架构预留扩展"仍以 Flutter 内实现为准。
 
 ---
 
@@ -336,19 +338,19 @@ class ShareRecord {
 
 ### 8.3 保险柜主页（列表 · 全屏覆盖布局）
 
-- **顶部覆盖面板**（`VaultTopBar`，渐变遮罩 `topScrim` 向下平滑淡出，无分割线）：金色主按钮「上锁」56 高，常驻顶部同一位置；上锁 → 清空内存解密数据 → 回解锁页。
+- **顶部浮层**：左上「设置」胶囊（`PillButton` highlight）+ 顶部渐变遮罩 `topScrim` 向下平滑淡出（无分割线）。**「上锁」不在页内**——由全局 `VaultLockButtonOverlay` 渲染在右上角（见 9.5）。
 - **列表全屏**：条目从面板下方铺满全屏；滚动时条目**从渐变遮罩下透出渐隐**（不是实心遮挡）。
 - 列表：每个条目显示 **钥匙图标 + 名称（金色）** 一行，**不显示加密密钥与内容**（进入查看页可见）。
-- **钥匙图标即钥匙开关**：金色 = 作为钥匙；灰色（`goldDim`）= 不作为钥匙。点击图标直接切换，无需进入查看页；触发 6.4 约束时提示。钥匙图标在条目卡片左侧独立成列，方形点击反馈、与卡片同高。
+- **钥匙图标即钥匙开关**：金色 = 作为钥匙；灰色（`keyOff`）= 不作为钥匙。点击图标直接切换，无需进入查看页；触发 6.4 约束时提示。钥匙图标在条目卡片左侧独立成列，方形点击反馈、与卡片同高。
 - 点条目主体 → 查看页。
-- 空态：文字"暂无条目"。
+- 空态：两行克制中文引文（"重要的，只交给自己。" / "这里不解释，只守口如瓶。"），字号 24 / 20。
 - **检索输入框失焦**：点击列表或页面任意空白处收起系统键盘（`FocusScope.unfocus`）。
-- **底部浮层**（检索框 + 「设置」「备份」「添加」按钮）：直接压在底部渐隐遮罩（`bottomScrim` 向上平滑淡出）之上，与遮罩分离——遮罩只做视觉（`IgnorePointer`），浮层可交互。
-- **列表底部留白**：略高于检索浮层顶（`homeListBottomInset`），条目滚动到底时可**滑入遮罩下方渐隐淡出**，不是硬切到遮罩边缘。
+- **底部浮层**（检索框 + 右侧「添加」胶囊，宽 94）：直接压在底部渐隐遮罩（`bottomScrim` 向上平滑淡出）之上，与遮罩分离——遮罩只做视觉（`IgnorePointer`），浮层可交互。
+- **列表底部留白**：`contentBottomInset` 236，条目滚动到底时可**滑入遮罩下方渐隐淡出**，不是硬切到遮罩边缘。
 
 ### 8.4 添加 / 查看条目（全屏表单 · 无保存按钮 · 可选二次加密）
 
-- **全屏覆盖布局**：顶部 `VaultTopBar` 渐变遮罩（关闭叉 + "查看"/"添加"标题），底部 `VaultBottomScrim` 渐隐遮罩。
+- **全屏覆盖布局**：顶部 `VaultTopBar` 渐变遮罩（返回胶囊 + "查看"/"添加"标题），底部 `VaultBottomScrim` 渐隐遮罩。
 - **普通条目直接查看**：解锁后点条目主体即显示表单（名称、加密密钥、内容均可看可改），无需额外输入。
 - **可选二次加密（DEVELOPMENT 8.5b）**：条目可单独开启二次加密——开启时输入新密钥（两次确认），`secret`/`note` 不再落盘明文，而是整体 AES-GCM 加密进 `doubleCipher`（独立盐 `doubleSalt` 派生 KEK）。
   - 查看二次加密条目：先输入该条目的加密密钥（真实解密验证），正确才显示内容；错误提示"加密密钥不正确"。
@@ -367,15 +369,16 @@ class ShareRecord {
 - **底部操作浮层（二次加密 / 删除）**：查看模式的「开启二次加密 / 修改密钥 / 关闭二次加密 / 删除」按钮统一固定在页面底部，与主页检索框同一位置——压在底部渐隐遮罩（`VaultBottomScrim`）之上、`pageEdge` 水平边距、上 `unit3` / 下 `unit4` 间距（底部安全区外），**不随内容滚动**。未开启二次加密："开启二次加密"与"删除"**同一行各半**；已开启："修改密钥"单独一行，"关闭二次加密"与"删除"**同一行各半**。不显示任何状态说明文字。门禁页（需输入密钥）不显示该浮层。
 - 删除条目：底部浮层统一危险按钮，确认提示"删除后不可恢复"。删除钥匙条目时若触发 K 约束，按 6.4 自动调整 K 并提示。
 
-### 8.6 设置（全部可自定义项 · 无保存按钮）
+### 8.6 设置（左侧滑入侧栏 · 全部可自定义项 · 无保存按钮）
 
-- **顶栏**：`VaultTopBar` 渐变遮罩（返回箭头 + "设置"标题），底部 `VaultBottomScrim` 渐隐遮罩。
+- **入口**：主页左上「设置」胶囊 → 设置侧栏（`SettingsPanel`）从左侧滑入，宽 `width * 0.75`、通栏满高；主页内容右移被遮罩盖住，点击遮罩 / 系统返回键收起（非独立路由页，无 VaultTopBar / VaultBottomScrim）。
+- **侧栏顶部**：仅标题「设置」，右上角内置上锁胶囊（与全局上锁同款，宽 94）；顶部 / 底部渐隐与面板 `surface` 同色（`surfaceTopScrim` / `surfaceBottomScrim`）。
 - 命中数 K、每轮机会 M、冷却后机会 C：每个字段下方有小字备注说明用途（"解锁需要命中的不同密码数量"、"每轮最多可输入次数，机会耗尽进入冷却"、"冷却结束后每轮的机会数"）。
 - 冷却基础序列（分钟，数组编辑：如 `1` 或 `10,10,10`）、冷却增长率：小字备注说明（"每次失败的冷却时长，如 1 或 10,10,10"、"冷却时长按此倍数递增，1 为固定不变"）。
-- **无保存按钮**：字段失去焦点即自动保存（有改动才保存）；校验失败在顶部横幅报错；返回/锁定前若有改动先保存再退出。
+- **无保存按钮**：字段失去焦点即自动保存（有改动才保存）；校验失败在顶部横幅报错；锁定前若有改动先保存再退出。
 - 修改任意解锁参数时执行约束校验（K ≤ 钥匙数；机会 ≥ 1；冷却 ≥ 1 分钟；增长率 ≥ 1）。
-- 显示当前钥匙数 N 与"作为钥匙"的条目清单（跳转可改开关）。
-- **清空保险柜**：底部统一危险按钮。点击后弹窗**必须输入"清空"二字才能确认**；确认后删除库文件与尝试状态文件，回到首次创建页。确认弹窗文案说明"清空后所有条目与设置将删除，无法恢复"。
+- 显示当前钥匙数 N 与"作为钥匙"的条目清单（每条钥匙可点击切换开关，切换后按 6.4 约束自动调整 K 并提示）。
+- **底部工具区**：备份（进入 BackupScreen）/ 重置（危险按钮，同一行一左一右）。**清空保险柜**入口在此——点击后弹窗**必须输入"清空"二字才能确认**；确认后删除库文件与尝试状态文件，回到首次创建页。确认弹窗文案说明"清空后所有条目与设置将删除，无法恢复"。
 
 ### 8.7 备份：导出 / 导入
 
@@ -386,7 +389,7 @@ class ShareRecord {
 
 ### 8.8 提示（`VaultBanner` 顶部横幅）
 
-- 全应用提示/报错统一用顶部金色横幅 `showVaultBanner(context, 文案)`：金属渐变底 + 柔和阴影，从屏幕最上方滑入，停留后滑出。**不区分成功/失败颜色**，一律金色模板。
+- 全应用提示/报错统一用顶部金色横幅 `showVaultBanner(context, 文案)`：`surface` 卡底 + `goldDim` 金线描边 + 直角 + `AppShadows.banner` 柔和阴影，从屏幕最上方滑入，停留后滑出。**不区分成功/失败颜色**，一律金色模板（锁图标 + 金色正文）。
 - **可手动划走**：横幅支持向上滑动手势，向上拖过阈值立即消失（不等自动到时）。
 - 所有页面**禁止使用 SnackBar**（含解锁页的"打开成功/打开失败/冷却中"）。
 
@@ -403,9 +406,9 @@ class ShareRecord {
 >
 > 1. **文字样式必须引用组合 token `AppTextStyles.*`**（见 9.3d）。页面/组件**严禁**出现 `TextStyle(` 自行组装字号/字重/颜色。
 > 2. 颜色只允许 `AppColors.*`；字体只允许 `AppFontFamilies.*`；字号 `AppFontSizes.*`；字重 `AppFontWeights.*`；间距 `AppSpacing.*`；圆角 `AppRadius.*`；边框 `AppBorder.*`；尺寸 `AppSizes.*`；渐变 `AppGradients.*`；阴影 `AppShadows.*`；时长 `AppDurations.*`。
-> 3. **严禁任何硬编码字面量**：`Color(0x…)`、`Colors.x`、`fontSize:`、`FontWeight.w…`、`fontFamily:`、`EdgeInsets.all(16)`、`height: 56`、`size: 24`、`blurRadius:`、`Duration(milliseconds:`、`letterSpacing: 4`、`BoxConstraints(minWidth: 40)` 等。逻辑常量（`if (x < 1)` / `~/ 60` 等）除外。
-> 4. **高度算式不重复**：页面列表底部/顶部预留高度一律用 `VaultBottomScrim.height(mq)` / `VaultTopBar.totalHeight(mq)`，禁止各页面自行拼装。
-> 5. 验收标准：对 `lib/ui` 跑 9.7 末尾的审查命令，**必须零命中**；命中即不合格，打回重写。
+> 3. **严禁任何硬编码字面量**（**新增代码**）：`Color(0x…)`、`Colors.x`、`fontSize:`、`FontWeight.w…`、`fontFamily:`、`EdgeInsets.all(16)`、`height: 56`、`size: 24`、`blurRadius:`、`Duration(milliseconds:`、`letterSpacing: 4`、`BoxConstraints(minWidth: 40)` 等。逻辑常量（`if (x < 1)` / `~/ 60` 等）除外。既有组件内已固化并记录于 9.5 的值放行（见 9.7 放行口径）。
+> 4. **高度算式不重复**：页面列表底部/顶部预留高度一律用 `VaultBottomScrim.totalHeight(mq)` / `VaultTopBar.totalHeight(mq)`，禁止各页面自行拼装。
+> 5. 验收标准：对 `lib/ui` 跑 9.7 末尾的审查命令；命中项逐条核对——已在 9.5 组件规范记录的组件内部值放行，**新增的未记录字面量不合格、打回重写**。
 >
 > 一句话：**写页面 = 拼 token，不许写字面量。缺 token 先补 `tokens.dart`（优先复用现有组合），再写 UI。**
 
@@ -413,27 +416,27 @@ class ShareRecord {
 
 现代化、强硬、绝对安全，像保险柜。庄严、严肃、简单、高效。无图标、无装饰、无动画花活；信息密度克制，操作路径最短；报错与提示一律一句话。
 
-### 9.2 黑金色彩体系（Design Token · `AppColors`）
+### 9.2 深墨金色彩体系（Design Token · `AppColors`）
 
 | Token | 色值 | 用途 |
 |---|---|---|
-| `bg` | `#0D0D0D` | 全局背景（近黑） |
-| `surface` | `#161616` | 卡片 / 输入框底 |
-| `surfaceAlt` | `#1E1E1E` | 按压态 / 次级表面 |
-| `gold` | `#C9A227` | 主强调：标题、主按钮、激活态、成功 |
-| `goldDim` | `#8A7120` | 边框、分隔线（暗金） |
-| `textPrimary` | `#EDE8DC` | 主文字（暖白） |
-| `textSecondary` | `#8F8A80` | 次级文字（暖灰） |
-| `danger` | `#B3402A` | 失败 / 危险操作 |
-| `onGold` | `#0D0D0D`（同 `bg`） | `gold` 底上的前景文字（主按钮 / 主操作大按钮） |
+| `bg` | `#1C1B1E` | 全局背景（深墨） |
+| `surface` | `#2D2A24` | 卡片 / 输入框底 |
+| `surfaceAlt` | `#241F1A` | 更深一级的强调底（钥匙块 / 按压态） |
+| `gold` | `#E0AE40` | 主强调：主按钮填充、钥匙"开"、标题 |
+| `goldDim` | `#B09B74` | 弱化金：边框、分隔线、次级文字 |
+| `textPrimary` | `#F2E9D6` | 主文字（浅米白） |
+| `textSecondary` | `#B09B74` | 次级文字 / 占位（与 `goldDim` 同值） |
+| `keyOff` | `#6F6B60` | 钥匙"关"图标色（比次级文字更灰） |
+| `onGold` | `#241C07` | `gold` 底上的前景文字（主按钮 / 主操作大按钮） |
 
-- 状态语义：成功 = 金；失败 = 暗红。不用绿/蓝。
+- 状态语义：成功 = 金；失败 = `surfaceAlt` 底 `textSecondary` 字（危险操作不靠红色，靠文案与确认步骤）。不用绿/蓝。
 - 背景只允许 `bg`；卡片只允许 `surface`；强调色只允许 `gold`。
 
 ### 9.3 字体、字号、字重（Design Token）
 
-- 字体 token（`AppFontFamilies`）：默认系统字体；`mono = 'monospace'`（**加密密钥一律使用等宽字体**，便于辨认字符）。
-- 字号 token（`AppFontSizes`）：`title 20`、`heading 16`、`body 14`、`meta 12`、`mono 14`；标题字距 `titleSpacing 4`（IGotYou 字标专用）。
+- 字体 token（`AppFontFamilies`）：全局唯一字体 `serif = 'Noto Serif SC'`（theme.dart 注册，缺字回退 `PingFang SC` / `sans-serif`）。**所有文字（含加密内容）一律使用主体字体**，不切换等宽、不引入其它字体。
+- 字号 token（`AppFontSizes`）：`title 20`、`heading 16`、`body 14`、`meta 12`、`mono 14`。
 - 字重 token（`AppFontWeights`）：`strong 600`（标题 / 主按钮）、`normal 400`（正文）。
 
 ### 9.3d 组合文本样式 token（`AppTextStyles` · 页面唯一文字出口）
@@ -442,20 +445,17 @@ class ShareRecord {
 
 | Token | 组成（字号 / 字重 / 颜色） | 用途 |
 |---|---|---|
-| `wordmark` | title / strong / gold + `titleSpacing` | IGotYou 字标 |
-| `title` | title / strong / gold | 页面大标题（顶栏标题，如"设置""备份""编辑"） |
-| `heading` | heading / strong / textPrimary | 块标题（"创建保险柜""请输入密码"） |
-| `headingGold` | heading / strong / gold | 条目名称行 |
+| `title` | title / strong / textPrimary | 页面大标题（顶栏标题，如"设置""备份""查看"） |
+| `heading` | heading / strong / textPrimary | 块标题 / 条目名称（门禁页显示名） |
+| `headingGold` | heading / strong / gold | 列表条目名称行 |
 | `body` | body / normal / textPrimary | 正文、字段标签、弹窗正文 |
-| `bodySecondary` | body / normal / textSecondary | 占位、空态、次级正文 |
-| `bodyGold` | body / normal / gold | 钥匙"开" |
-| `bodyError` | body / normal / danger | 报错文字 |
-| `meta` | meta / normal / textSecondary | 小字提示、钥匙状态"关" |
+| `bodySecondary` | body / normal / textSecondary | 占位、次级正文 |
+| `bodyGold` | body / normal / gold | 横幅正文（统一金色提示） |
+| `meta` | meta / normal / textSecondary | 小字提示、设置项备注、钥匙状态"关" |
 | `metaGold` | meta / normal / gold | 小字强调（钥匙状态"开"） |
 | `metaDim` | meta / normal / goldDim | 重复标注等辅助说明 |
-| `metaDanger` | meta / normal / danger | 冷却倒计时、删除标记 |
-| `mono` | mono / normal / textPrimary + `AppFontFamilies.mono` | 加密密钥 |
-| `buttonLabel` | body / strong（颜色随按钮前景） | 主按钮 / 次按钮文字 |
+| `mono` | mono / normal / textPrimary（全局同字体） | 加密密钥 / 密码输入 |
+| `buttonLabel` | body / strong（颜色随按钮前景，显式锁定主题字体） | 主按钮 / 危险按钮 / 文字按钮 |
 
 - 页面内**不得**出现 `TextStyle(`、`fontWeight:`、`fontSize:`、`fontFamily:` 等；一律引用上述组合 token。
 - 需要新文字形态时，**优先用现有组合拼接语义**（如 `metaGold` 已含"小字+金色"）；确无对应组合才在 `tokens.dart` 新增。
@@ -468,9 +468,9 @@ class ShareRecord {
 
 ### 9.4b 渐变 token（`AppGradients`）
 
-- `gateMetal`：保险柜门面金属渐变，上亮下暗（`surfaceAlt → surface → bg`），模拟金属柜门受光。仅用于保险柜门面（解锁 / 创建页）与提示横幅。
 - `topScrim`：顶部覆盖遮罩（`bg` 实心 → 0.90 → 0.48 → 透明，四档平滑淡出），主页/设置/备份/编辑页顶栏用——条目滚动穿过时渐隐显现，**不是实心遮挡**。
 - `bottomScrim`：底部渐隐遮罩（自下而上 `bg` 实心 → 0.90 → 0.48 → 透明，四档平滑淡出），主页检索浮层与各页面底部用。
+- `surfaceTopScrim` / `surfaceBottomScrim`：侧栏 / 面板顶部、底部渐隐，**与面板 `surface` 同色**（不出现其它颜色色带）。
 
 > 规则：任何"覆盖在内容之上的半透明层"一律用 `AppGradients.*` 遮罩 token，**禁止**在页面里裸写 `Color(0x…)` 透明度；需要新遮罩先加 token。
 
@@ -481,58 +481,108 @@ class ShareRecord {
 
 ### 9.4d 阴影 token（`AppShadows`）
 
-- `banner`：顶部提示横幅投影（`Color(0x80000000)` / blur 12 / offset (0,4)）。
-- 阴影一律走 `AppShadows.*`；页面内禁止裸写 `BoxShadow(...)` / `blurRadius:` / `offset: Offset(...)`。
+- `banner`：顶部提示横幅投影（`Color(0x30000000)` / blur 20 / offset (0,2)）。
+- 阴影一律走 `AppShadows.*`；**页面组装代码**禁止裸写 `BoxShadow(...)` / `blurRadius:` / `offset: Offset(...)`。
+- 组件内部视觉规格中自带阴影的（门面 `VaultGate`、胶囊 `PillButton`、设置侧栏），阴影值写在 9.5 组件规范内，**属于组件内部实现，不算违规**（以代码现状为准，2026-09-03 起）。
 
-### 9.5b 保险柜门面组件（解锁 / 创建页专用）
+### 9.5b 保险柜门面组件（解锁 / 创建页 / 二次加密门禁专用）
 
-**`VaultGate`（保险柜门面）**——解锁 / 创建页的视觉主体：
+**`VaultGate`（保险柜门面）**——解锁 / 创建页 / 条目门禁的视觉主体：
 
 - 全页居中，最大宽度 360（`AppSizes.gateMaxWidth`），可滚动（小屏适配）。
-- 背景 `AppGradients.gateMetal` 金属渐变；边框 1px `gold`（`AppBorder.gateWidth`）；圆角 2（`AppRadius.gate`）；内边距 32（`AppSizes.gatePadding`）。
-- 门面内**只允许放输入区与主按钮**，禁止任何标题、说明、铭文、装饰。
+- 背景 `surface` 纯色卡（**不用渐变**）；边框 1px `gold`（`AppBorder.gateWidth`）；圆角 2（`AppRadius.gate`）；内边距 32（`AppSizes.gatePadding`）；轻阴影（`0x14000000` / blur 18 / offset (0,8)）。
+- 门面内**只允许放输入区与主按钮**，禁止任何标题、说明、铭文、装饰（门禁页除外：显示条目名称一行，不可编辑）。
 - 输入区与主按钮间距 24（`AppSizes.gateGap`）。
 
-### 9.5 组件规范
+### 9.5 组件规范（以当前实现为准）
 
-- **主按钮**：`gold` 底、`#0D0D0D` 文字、圆角 2、高 48（`AppSizes.buttonHeight`）、文字居中。禁用态降为 `surfaceAlt` 底 `textSecondary` 字。
-- **主操作大按钮**（打开 / 锁定保险柜）：主按钮样式，高 56（`AppSizes.heroButtonHeight`）。全应用仅这两个动作使用。**上锁按钮常驻顶栏**（`VaultTopBar` 内），永不隐藏、永不禁用。
-- **顶部小导航按钮**（主页设置/备份/添加）：高 34（`AppSizes.navButtonHeight`）、`surfaceAlt` 底 + `gold` 字、无边框。主页底部浮层内一行并排。
-- **页面顶栏**（主页/设置/备份/编辑页）：`VaultTopBar` 渐变遮罩覆盖（`topScrim`），前置图标 24（`AppSizes.topBarIconSize`），无前置按钮时占位 48（`AppSizes.topBarLeadingWidth`）保持标题对齐；高度 `totalHeight = safeTop + scrimHeight`。
-- **底部渐隐遮罩**：`VaultBottomScrim` 纯视觉遮罩（`bottomScrim`，`IgnorePointer`，不拦截点击），高度 `height = safeBottom + bottomMaskHeight(180)`；页面用 `VaultBottomScrim.height(mq)` 预留列表底部空间，禁止自行拼高度。
-- **主页底部浮层**：检索框 + 设置/备份/添加按钮，作为 `Positioned` 浮层压在渐隐遮罩之上（遮罩与浮层分离）；列表底部留白 `homeListBottomInset(128)`，让条目可滑入遮罩下方渐隐。
-- **次按钮（文字按钮）**：无底色、`gold` 文字。用于"设置""备份""添加"等；危险操作（删除 / 清空）用 `danger` 文字。
-- **输入框**：`surface` 底、1px `goldDim` 边框、聚焦时 `gold` 边框、`textPrimary` 文字、`textSecondary` 占位。前缀图标（如锁/钥匙）尺寸 18（`AppSizes.iconSize`）、`goldDim` 色。
-- **列表条目**：`surface` 底卡片，一行内容 = 左侧钥匙图标（`Icons.key`，尺寸 18）+ 名称（`headingGold`），卡片间距 8。**不显示加密密钥与内容**。
-- **钥匙图标开关**：点击图标直接切换钥匙状态。金色 = 作为钥匙；灰色（`goldDim`）= 不作为钥匙。
-- **对话框**：`surface` 底、`goldDim` 边框、标题 `heading`、正文 `body`、主/次按钮。危险确认（清空保险柜）要求**输入指定文字才能确认**。
-- **提示（顶部横幅）**：一句话，如"已保存""删除后不可恢复""打开成功""打开失败"；**统一金色模板，不区分成功/失败颜色**（见 8.8）。
-- **设置项备注**：设置页每个可配置字段下方有一行 `meta` 小字说明用途。
+**胶囊按钮 `PillButton`**（`pill_button.dart`）——顶部浮层 / 次级操作统一按钮：
+
+- 方形直角（圆角 2，`AppRadius.button`）。
+- `highlight = true`：`gold` 底 + `onGold` 字（主色填充，强调态）；`highlight = false`：`surface` 底 + `textPrimary` 字 + `goldDim` 金线描边。
+- 图标 16 + 文字 13.5 / w600，内边距 `(16/10)`，紧凑 `compact` 为 `(14/9)`；轻阴影 `0x16000000`。
+- 用于：主页左上「设置」、二级页左上「返回」（仅图标）、右上角全局「上锁」、检索行右侧「添加」（固定宽 94）。
+
+**主按钮 `VaultButton`**（`vault_button.dart`）：
+
+- `gold` 底、`onGold` 字（`#241C07`）、圆角 2、高 48（`AppSizes.buttonHeight`）、文字居中。
+- 禁用态降为 `surfaceAlt` 底 `textSecondary` 字。
+- `highlighted = true`：金色粗边框 `width 2`（用于"只差最后一步"的解锁 / 查看按钮，人工点击才进入）。
+- 主操作大按钮高 56（`AppSizes.heroButtonHeight`）：全应用仅「创建 / 打开 / 解锁 / 查看 / 锁定」等关键动作使用。
+
+**危险按钮 `VaultDangerButton`**：`surface` 底 + `goldDim` 金线描边 + `textPrimary` 字，全宽（清空 / 删除 / 备份 / 导入等）。危险操作不做红色，靠文案与确认步骤。
+
+**文字按钮 `VaultTextButton`**：无底色、`gold` 文字（弹窗内主 / 次操作），危险语义（删除 / 清空）文字仍为 `gold`（不区分红）。
+
+**页面顶栏 `VaultTopBar`**（二级页：备份 / 编辑 / 门禁）：
+
+- 顶部 `topScrim` 渐变遮罩（高度 `topScrimHeight` 170，固定不含安全区）。
+- 内容行（`SafeArea`）：左上「返回」胶囊（与主页「设置」胶囊同款同位置：`pageEdge` + `topChromeInset` 8）+ 纯文字标题 `title`；无前置按钮时占位 `topBarLeadingWidth` 48 保持标题对齐。
+- 首条目距顶 = `contentTopInset` 140（`VaultTopBar.totalHeight(mq)`，与主页一致）。**「上锁」不在此处**，由全局浮层渲染。
+
+**全局上锁按钮 `VaultLockButtonOverlay`**（`vault_lock_button.dart`）：
+
+- 由 `MaterialApp.builder` 在导航器外层渲染一次，全应用共用，悬于所有页面（含遮罩）之上。
+- 固定**右上角**：`right = pageEdge` 16、`top = safeTop + topChromeInset` 8（与主页顶部胶囊同一水平线）；样式与「设置」胶囊一致（`PillButton` highlight）。
+- 仅在已解锁时显示；设置侧栏展开时隐藏（侧栏内自带同款）。点击：失焦（触发页面自动保存）→ 等待 `beforeLock` → 锁定 → 收起所有二级路由回到根页。
+
+**主页布局**（`vault_screen.dart`）：
+
+- 左上「设置」胶囊 → 打开左侧滑入的设置侧栏（宽 `width * 0.75`，遮罩点击 / 返回键收起）。
+- 中部全屏条目列表：上下边距 `contentTopInset` 140 / `contentBottomInset` 236（条目可滑入上下遮罩下渐隐）。
+- 底部检索浮层：`VaultField` 紧凑检索框 + 右侧「添加」胶囊（宽 94），压在底部遮罩之上。
+- 空条目态：两行中文引文（24 / 20，无英文）。
+
+**设置侧栏 `SettingsPanel`**（`settings_panel.dart`）：
+
+- 左侧滑入、宽 `width * 0.75`，通栏满高（不套 SafeArea），右侧细边框 `textSecondary` 0.45 + 阴影（`0x24000000` / blur 28 / offset (8,0)）。
+- 顶部与底部渐隐**与面板 `surface` 同色**（`surfaceTopScrim` / `surfaceBottomScrim`）；顶部仅标题「设置」，右上角内置上锁胶囊（宽 94）。
+- 内容：命中数 K / 每轮机会 M / 冷却后机会 C / 冷却基础序列 / 冷却增长率 / 钥匙列表；字段失焦即自动保存，校验失败走横幅。
+- 底部浮层：备份 / 重置（危险按钮，同一行一左一右）。
+
+**输入框 `VaultField`**（`vault_field.dart`）：
+
+- `surface` 底、1px `goldDim` 边框（恒定，无聚焦变色）、直角 2；`textPrimary` 文字、`textSecondary` 占位；`isDense` + 内边距 `(16/12)`，无固定高度。
+- 前缀图标尺寸 18（`AppSizes.iconSize`）、`goldDim` 色；前缀宽度 40（`fieldPrefixWidth`），紧凑检索框 32（`fieldPrefixWidthCompact`）。
+- `mono: true` 用 `AppTextStyles.mono`（加密密钥 / 密码输入）；`obscure` 掩码；可选 `trailing` 内嵌小按钮。
+- `VaultFieldDivider`：字段间细分隔线（`goldDim` 32% 透明度）。
+
+**列表条目 `VaultEntryTile`**（`vault_entry_tile.dart`）：
+
+- 左侧独立钥匙块（宽 56 `tileKeyWidth`、与卡片同高、整列可点击）：金色钥匙 = 作为钥匙、灰钥匙（`keyOff`）= 否；二次加密条目钥匙块内**两把钥匙上下排列、居中**（图标 24 `tileKeyIconSize`，不加金边框）。
+- 右侧名称卡片：`surface` 底、弱金描边（`goldDim` 45%）、标题 `headingGold`，间距 8（`tileGap`）。**不显示加密密钥与内容**。
+
+**对话框**：`surface` 底、`goldDim` 边框（全局 `dialogTheme`）、正文 `body`、主 / 次按钮 `VaultTextButton`。危险确认（清空保险柜）要求**输入指定文字才能确认**。
+
+**提示（顶部横幅）**：`showVaultBanner` 统一金色模板，不区分成功 / 失败颜色（锁图标 18 + `bodyGold`，`AppShadows.banner`，滑入 240ms / 停留 2600ms / 滑出 200ms，可上滑手动关闭）。
+
+**设置项备注**：设置页每个可配置字段下方有一行 `meta` 小字说明用途。
 
 ### 9.6 文案规范（简单高效）
 
 - 所有文案为短语/短句，不加标点废话。
 - **禁止出现"口令"字样**，统一用"密码"（如"请输入密码"）；UI 文案示例：
-  - 成功："打开成功" / "已保存"
-  - 失败："打开失败"
-  - 报错："请输入名称" / "请输入加密密钥" / "当前钥匙密码 2 种，命中数最大 2" / "备份版本过高，请升级应用" / "文件损坏"
-  - 确认："删除后不可恢复，确认？" / 清空保险柜需输入"清空"二字确认
-  - 空态："暂无条目"
+  - 成功："打开成功" / "已保存" / "已导出" / "二次加密已开启"
+  - 失败："打开失败" / "创建失败" / "保存失败" / "删除失败"
+  - 报错："请输入名称" / "请输入加密密钥" / "当前钥匙密码 2 种，命中数最大 2" / "加密密钥不正确" / "当前密钥不正确" / "文件损坏"
+  - 确认："删除后不可恢复，确认？" / 清空保险柜需输入"清空"二字确认 / "导入将替换当前保险柜，确认？"
+  - 空态：主页空条目 = **两行克制引文**（"重要的，只交给自己。"/"这里不解释，只守口如瓶。"）；设置页无钥匙 = "暂无钥匙"
 - 解锁页**永不出现**命中数文案（见 3.4）。
 
 ### 9.7 禁止事项（违反即不合格）
 
 - ❌ 任何装饰性图标、emoji、SVG 图形（功能性前缀图标除外，见 1.3 / 9.5）。
 - ❌ **在 `lib/ui/**`（页面 + 组件）内出现 `TextStyle(`**：文字样式必须用 `AppTextStyles.*` 组合 token。
-- ❌ **任何硬编码样式字面量**：颜色、字号、字重、间距、圆角、边框、尺寸、阴影、时长一律引用 `tokens.dart` 的 token。禁止裸写 `Color(0x…)`、`Colors.x`、`fontSize:`、`FontWeight.w…`、`fontFamily:`、`EdgeInsets.all(16)`、`height: 56`、`size: 24`、`blurRadius: 12`、`Offset(0, 4)`、`letterSpacing: 4`、`BoxConstraints(minWidth: 40)`、`Duration(seconds: 1)` 等。逻辑常量（`if (x < 1)`、`~/ 60` 等）除外。
+- ❌ **新增代码中任何硬编码样式字面量**：颜色、字号、字重、间距、圆角、边框、尺寸、阴影、时长一律引用 `tokens.dart` 的 token。禁止裸写 `Color(0x…)`、`Colors.x`、`fontSize:`、`FontWeight.w…`、`fontFamily:`、`EdgeInsets.all(16)`、`height: 56`、`size: 24`、`blurRadius: 12`、`Offset(0, 4)`、`letterSpacing: 4`、`BoxConstraints(minWidth: 40)`、`Duration(seconds: 1)` 等。逻辑常量（`if (x < 1)`、`~/ 60` 等）除外。
+  - **放行口径（2026-09-03 起）**：组件内部视觉规格中已固化并记录于 9.5 组件规范的值（如 `PillButton` 图标 16 / 字 13.5 / 内边距 / 轻阴影、`VaultGate` 门面阴影 `0x14000000` blur 18 offset (0,8)、`VaultButton` 高亮粗边框 2、设置侧栏阴影 `0x24000000` blur 28 offset (8,0)、主页空态引文字号 24/20、主页「添加」胶囊固定宽 94、保存遮罩指示器 22、`Duration 340ms` 侧栏动画等）**属于既有实现的一部分，不算违规**；未记录的新字面量仍打回。
 - ❌ 多步骤引导、介绍动画。
 - ✅ 新样式一律先加 token（优先复用 `AppTextStyles` 现有组合），再在 UI 引用；全局改风格只动 `tokens.dart` / `theme.dart` 两处。
-- ✅ 页面高度计算复用组件静态方法（`VaultTopBar.totalHeight` / `VaultBottomScrim.height`），禁止各页面自行拼装。
+- ✅ 页面高度计算复用组件静态方法（`VaultTopBar.totalHeight` / `VaultBottomScrim.totalHeight`），禁止各页面自行拼装。
 
-**审查命令（写任何页面/组件后必须自查，命中即打回重写）：**
+**审查命令（写任何页面/组件后必须自查）：**
 
 ```bash
-# 期望输出为零；裸露的 TextStyle/Color/fontSize/数字尺寸/阴影/时长 = 不合格
+# 输出逐条核对：已在 9.5 组件规范记录的组件内部值 = 放行；新增未记录的字面量 = 打回
 rg -n 'TextStyle|\bColors\.|Color\(0x|fontSize:|FontWeight\.|fontFamily:|EdgeInsets\.all\([0-9]|letterSpacing: [0-9]|width: [0-9]|height: [0-9]|size: [0-9]|blurRadius|Duration\(' lib/ui
 ```
 
@@ -542,16 +592,16 @@ rg -n 'TextStyle|\bColors\.|Color\(0x|fontSize:|FontWeight\.|fontFamily:|EdgeIns
 
 ```
 解锁页 UnlockScreen
-  ├─ 创建保险柜（仅首次）
+  ├─ 创建保险柜（仅首次，保险柜文件不存在时）
   └─ 保险柜 VaultScreen
-       ├─ 条目编辑 EntryEditScreen（添加/编辑共用）
-       ├─ 设置 SettingsScreen（顶部"设置"按钮进入）
-       └─ 备份 BackupScreen（顶部"备份"按钮进入）
+       ├─ 设置侧栏（SettingsPanel，顶部「设置」胶囊 → 左侧滑入）
+       ├─ 条目编辑 EntryEditScreen（点击条目 / 底部「添加」胶囊进入）
+       └─ 备份 BackupScreen（设置侧栏内「备份」按钮进入）
 ```
 
-- 解锁成功后 → VaultScreen；锁定 → 清内存 → UnlockScreen。
-- **设置/备份/添加入口均在保险柜内部**：主页顶部"设置""备份"靠左、"添加"在右上；解锁页门面内不放任何文字入口提示（见 8.2）。
-- 上锁按钮在主页、设置、备份、编辑页顶栏**全部常驻**（任何页面可紧急锁定，锁定后回到解锁页）。
+- 解锁成功后 → VaultScreen；锁定 → 清内存 → 回到 UnlockScreen。
+- 设置/备份入口在保险柜内部：主页左上「设置」胶囊 → 侧栏内「备份」按钮；「添加」在主页底部检索行右侧胶囊。
+- 全局上锁按钮由 `VaultLockButtonOverlay` 渲染在**右上角**（`MaterialApp.builder` 嵌入导航器外层），任何页面（含遮罩）上可见；设置侧栏展开时隐藏（侧栏内右上角自带同款上锁胶囊）。点击锁定后回到根解锁页。
 
 ---
 
@@ -594,40 +644,49 @@ rg -n 'TextStyle|\bColors\.|Color\(0x|fontSize:|FontWeight\.|fontFamily:|EdgeIns
 
 ```
 lib/
-  main.dart
+  main.dart               # 入口：ChangeNotifierProvider + MaterialApp（builder 挂全局上锁）
   theme/
-    tokens.dart          # 全部设计 token（9 章唯一来源）
-    theme.dart           # 生成 ThemeData
+    tokens.dart           # 全部设计 token（9 章唯一来源）
+    theme.dart            # 生成 ThemeData（全局唯一字体）
   core/
     crypto/
-      argon2.dart        # 口令派生封装
-      aes_gcm.dart       # 加解密封装
-      hkdf.dart
-      shamir.dart        # SSS 拆分/重构
-      keychain.dart      # MK 生成、份额管理
+      argon2.dart         # 口令派生封装
+      aes_gcm.dart        # 加解密封装
+      keychain.dart       # MK 生成、SK 派生、份额管理、口令封套
+      shamir.dart         # SSS 拆分/重构
     models/
       entry.dart
+      share_record.dart
       vault_config.dart
+      vault_structure.dart  # 维护层结构块（方案三 17.20：口令封套表）
     file/
-      vault_file.dart    # .igotyou 读写（header/shares/body）
+      vault_file.dart     # .igotyou 读写（header/shares/body）
     unlock/
-      unlock_engine.dart # 命中判定、去重、状态机
-      attempt_state.dart # 机会/冷却持久化
+      unlock_engine.dart  # 命中判定、去重、状态机
+      attempt_state.dart  # 机会/冷却持久化
+    normalize.dart        # trim + NFC 规范化
+    vault_session.dart    # 会话：BODY 解密/加密、份额重建、保存、锁定
+    app_state.dart        # 顶层状态：路径、引擎、会话生命周期、导入/清空
   ui/
-    unlock_screen.dart
-    vault_screen.dart
-    entry_edit_screen.dart
-    settings_screen.dart
-    backup_screen.dart
+    unlock_screen.dart    # 解锁 / 首次创建（VaultGate 门面）
+    vault_screen.dart     # 主页：全屏列表 + 检索浮层 + 设置侧栏容器
+    entry_edit_screen.dart# 条目编辑（含二次加密门禁 / 二次加密管理）
+    backup_screen.dart    # 导出 / 导入备份
     widgets/
-      vault_button.dart
-      vault_field.dart
-      vault_entry_tile.dart
-      vault_top_bar.dart       # 页面顶栏（渐变遮罩覆盖 + 上锁按钮）
-      vault_bottom_scrim.dart  # 底部渐隐遮罩（纯视觉，IgnorePointer）
-      vault_banner.dart      # 顶部提示横幅（统一提示/报错）
-      vault_gate.dart        # 保险柜门面（解锁/创建页）
+      pill_button.dart    # 胶囊按钮（设置/返回/上锁/添加，统一胶囊语言）
+      vault_button.dart   # 主 / 危险 / 文字按钮
+      vault_field.dart    # 输入框（含检索条 / 字段分隔线）
+      vault_entry_tile.dart # 条目行（钥匙块 + 名称卡片）
+      vault_top_bar.dart    # 二级页顶部浮层（渐变遮罩 + 返回胶囊 + 标题）
+      vault_bottom_scrim.dart # 底部渐隐遮罩（纯视觉，IgnorePointer）
+      vault_banner.dart   # 顶部提示横幅（统一提示/报错）
+      vault_gate.dart     # 保险柜门面（解锁/创建/二次加密门禁）
+      vault_lock_button.dart # 全局上锁按钮（右上角悬浮层）
+      settings_panel.dart # 设置侧栏（左侧滑入面板）
+      missing_key_prompt.dart # 二次加密钥匙明文缺失输入弹窗
 ```
+
+> 说明：设置不是独立 Screen，而是 `vault_screen.dart` 内左侧滑入的侧栏（`SettingsPanel`）；备份从设置侧栏进入（`BackupScreen`）。
 
 ### 12.3 性能与轻量要求（验收指标）
 
@@ -645,14 +704,14 @@ lib/
 
 1. **先查 token，有就用**：颜色/字号/字重/间距/圆角/边框/尺寸/渐变/阴影/时长，一律查 `tokens.dart`（`AppColors / AppFontSizes / AppFontWeights / AppFontFamilies / AppTextStyles / AppSpacing / AppRadius / AppBorder / AppGradients / AppShadows / AppDurations / AppSizes`）。存在就直接引用。
 2. **没有就加 token，绝不硬编码**：需要的新样式先补进 `tokens.dart`（优先复用现有组合），再在 UI 引用。全局改风格只动 `tokens.dart` / `theme.dart` 两处。
-3. **组件复用**：重复出现的 UI 结构先看 `lib/ui/widgets/` 有没有现成组件（`vault_button / vault_field / vault_entry_tile / vault_top_bar / vault_bottom_scrim / vault_banner / vault_gate`）；没有就抽组件，不复制粘贴。
-4. **页面高度用组件静态方法**：`VaultTopBar.totalHeight(mq)`、`VaultBottomScrim.height(mq)`，禁止各页面自行拼装高度算式。
-5. **跑审查命令**：写完必须跑 9.7 末尾的审查命令，零命中才合格。
+3. **组件复用**：重复出现的 UI 结构先看 `lib/ui/widgets/` 有没有现成组件（`pill_button / vault_button / vault_field / vault_entry_tile / vault_top_bar / vault_bottom_scrim / vault_banner / vault_gate / vault_lock_button / settings_panel / missing_key_prompt`）；没有就抽组件，不复制粘贴。
+4. **页面高度用组件静态方法**：`VaultTopBar.totalHeight(mq)`、`VaultBottomScrim.totalHeight(mq)`，禁止各页面自行拼装高度算式。
+5. **跑审查命令**：写完必须跑 9.7 末尾的审查命令自查；命中项须逐一核对——已在 9.5 组件规范中记录的组件内部值放行，**新增的未记录字面量一律打回**。
 
 **审查重点（写出即自查）：**
 
 - 无重复实现：同一段逻辑/同一个布局在不同页面出现 ≥2 次，就要抽成共享方法或组件。
-- 无硬编码：`lib/ui/**` 内不允许任何样式字面量（见 9.7），高度算式不允许重复。
+- 无硬编码：`lib/ui/**` 内的**新增代码**不允许任何样式字面量（组件内部已固化的见 9.5，2026-09-03 起放行）；高度算式不允许重复。
 - 无死代码：未使用的 import、方法、变量一律删除。
 - 无注释噪音：代码自解释的地方不写注释；只有非显然的意图（安全约束、时序）才配说明。
 - 轻量：不引入多余依赖、不做过度抽象；一个 widget 能解决的不造框架。
@@ -664,7 +723,7 @@ lib/
 
 ## 13. 环境与工具链：Flutter 怎么用（对齐 SoWhat，2026-08-30）
 
-> 本仓库环境与 SoWhat 完全一致、无残留。详细说明另见根目录 `环境与工具链.md`，此处为 DEVELOPMENT 内嵌版。
+> 本仓库环境与 SoWhat 完全一致、无残留。本文档即为工具链唯一说明（无独立 `环境与工具链.md`）。
 
 ### 13.1 三件套：SDK 本体放本机 + 项目只放软链 + 统一入口
 
@@ -715,7 +774,7 @@ exec "$DART" analyze "$@"
 ### 13.5 缓存联动与 git 边界
 
 - `.dart_tool/`、`.fvm/`、`.fvm/pub-cache`、`.fvm/analyze-home` 三者联动，全部 gitignore，不进 git。
-- **进 git**：`.fvmrc`、`tool/flutter`、`tool/analyze`、`.gitignore`、本文档、`环境与工具链.md`。
+- **进 git**：`.fvmrc`、`tool/flutter`、`tool/analyze`、`.gitignore`、本文档。
 
 ### 13.6 Flutter 工作流速查
 
@@ -770,8 +829,8 @@ exec "$DART" analyze "$@"
 4. 保险柜列表每行显示钥匙图标 + 名称；点击图标切换钥匙状态（金色 = 开 / 灰色 = 关）→ 输入其内容是否命中随之变化；最后一把钥匙不可关闭/删除，操作被拒绝并提示。
 5. 名称/加密密钥/内容在磁盘上均无明文（静态检查文件字节）。
 6. 编辑条目内容 → 导出 .igotyou → 新设备导入 → 同套密码盲输打开 → 内容完整可读。
-7. 应用内无任何装饰性图标（功能性钥匙图标除外）；全应用样式 token 唯一来源；`lib/ui` 跑 9.7 审查命令**零命中**（无 `TextStyle(`、无硬编码颜色/字号/间距/字重/字体字面量）。
-8. 上锁按钮**永远固定在顶栏同一位置、永远可点击**；点击后立即回到解锁页，内存密钥清零（可抽查）。
+7. 应用内无任何装饰性图标（功能性钥匙图标除外）；全应用样式 token 唯一来源；`lib/ui` 跑 9.7 审查命令，命中项逐条核对——已在 9.5 组件规范记录的组件内部值放行，**新增的未记录字面量不合格**。
+8. 上锁按钮由全局浮层**固定在右上角同一位置、永远可点击**；点击后立即回到解锁页，内存密钥清零（可抽查）。
 9. 机会与冷却在解锁页有明确显示；解锁过程全程无命中数提示；每次提交后输入框清空。
 10. 保险柜列表**只显示名称**，不显示加密密钥与备注；点击空白处收起键盘。
 11. 设置页每个参数有用途小字备注；**清空保险柜必须输入"清空"确认**，确认后回到首次创建页。
@@ -950,3 +1009,22 @@ exec "$DART" analyze "$@"
   - 存量库迁移：首次结构变更按旧逻辑索要缺失口令一次，补写封套后永久免费。
 - **安全**：封套与 BODY 同层（MK 保护），文件被盗/未解锁者不可解（少 K 份份额 ⇒ 无 MK ⇒ 无 SK）；解锁进库者（持 MK）理论上可解封套，条目查看门禁保留为第二道防线（防窥屏）。
 - **测试**：`test/vault_session_test.dart` 新增"方案三：维护层与条目层解耦"组——改 K 下调/上调无口令、改 M 无口令、封套不落明文、改密后旧口令不命中、删钥匙/切开关不索密、非钥匙条目一次输密后切钥匙免费、存量库剥离结构块后自愈（首次索要一次→封套落盘→永久免费）；同步改写 `锁定清空密钥缓存`（重切不再抛错）、`seedDoubleKeys`（封套计数即精确）、`关闭二次加密预检`（改密不再索他钥）三个旧用例。`tool/analyze` 全绿；`flutter test` 受工具链沙箱限制未在本次执行（同 17.14）。
+
+### 17.21 文档与代码漂移修复：UI 规范全面以代码现状为准（2026-09-03）
+
+- **背景**：历次 UI 重构（黑金 → 深墨金体系、顶栏小导航 → PillButton 胶囊、右下角上锁 → 右上角全局浮层、设置页 → 侧栏）后，第 8/9/10/12 章 UI 规范长期未同步，审查命令命中大量「假违规」；同时 `tokens.dart` 残留多轮重构后的死 token。用户决策：**不迁就规范改代码，而是以当前代码为事实基准修订文档**（README / DEVELOPMENT / UI风格规范 三份全部对齐）。
+- **代码清理**：删除 10 个全库零引用的死 token（`tokens.dart`）——`AppSizes.lockButtonBottomOffset / inputHeight / navButtonHeight / navIconButtonSize / topBarHeight / topBarIconSize / scrimFade`、`AppGradients.gateMetal`、`AppTextStyles.wordmark`、`AppFontSizes.titleSpacing`（wordmark 专用）；`tool/analyze` 全绿，UI 视觉零变化（全部无引用）。
+- **文档修订（以代码为准）**：
+  1. **9.2** 色彩表对齐代码：`bg #1C1B1E` 系深墨金（原文档 `#0D0D0D` 系黑金），补 `keyOff`，删 `danger`（代码无此色，危险操作不再靠红色）；
+  2. **9.3** 字体：删除 `mono = 'monospace'` 等宽描述（全局唯一 Noto Serif SC，加密内容同字体）；
+  3. **9.3d** 组合样式表：删 `wordmark / bodyError / metaDanger` 三行（代码无），`title` 色值改 `textPrimary`、`mono` 注释改"全局同字体"；
+  4. **9.4b** 渐变：删 `gateMetal`（门面实为纯色卡），补 `surfaceTopScrim / surfaceBottomScrim`；
+  5. **9.4d** 阴影：`banner` 值改 `Color(0x30000000)` / blur 20 / offset (0,2)；
+  6. **9.5b / 9.5** 组件规范全量重写为现状：`PillButton` 胶囊、`VaultButton` 高亮粗边框 2、`VaultDangerButton / VaultTextButton`、`VaultTopBar` 返回胶囊 + 标题、全局 `VaultLockButtonOverlay` 右上角、主页布局（设置胶囊 / 检索+添加 / 空态引文）、`SettingsPanel` 侧栏、`VaultField / VaultEntryTile / 对话框 / 横幅`；
+  7. **9.6** 空态文案："暂无条目" → 主页空态两行引文（24/20）；
+  8. **9.7 / HARD RULE**：硬编码禁令口径改为「**新增代码**」禁字面量；**放行口径**——组件内部已固化并记录于 9.5 的值（PillButton 13.5/图标 16/阴影、VaultGate 门面阴影、高亮粗边框 2、侧栏阴影、空态引文字号、添加胶囊宽 94、保存遮罩 22、340ms 侧栏动画等）属于既有实现不算违规，审查命令命中项逐条核对；
+  9. **10** 页面清单：设置/备份/添加入口位置、上锁按钮改为全局右上角浮层；
+  10. **12.2 目录结构**：按实际文件全量更新（新增 `app_state / vault_session / normalize / share_record / vault_structure / pill_button / settings_panel / vault_lock_button / missing_key_prompt`，删除不存在的 `settings_screen / hkdf`）；
+  11. **UI风格规范.md** 同步：5.4 上锁位置右下 → 右上、5.1 边距 118 → 140、5.2 宽度 70% → 75%、6.7 遮罩数值对齐、色彩表补 `keyOff`、文件地图补 `missing_key_prompt` 等。
+- **文档删除**：`IOS_NATIVE_MIGRATION_PLAN.md`（Swift/SwiftUI 原生化方案，用户 2026-09-03 定稿不做，决策记入 1.3）。README 同步重写（功能现状 / 里程碑 / 二次加密 / 方案三 / 自愈等）。
+- **测试**：`tool/analyze` 全绿；改动纯文档 + 零引用 token 删除，`flutter test` 无需重跑（同 17.14 工具链沙箱限制未执行）。

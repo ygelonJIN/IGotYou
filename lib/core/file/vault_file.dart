@@ -13,6 +13,11 @@ final int _minSupportedVersion = 1;
 /// 当前库文件版本（DEVELOPMENT 7.3）。
 const int vaultFileVersion = 1;
 const int _nonceLength = 12;
+const int _macLength = 16;
+const int _maxShares = 10000;
+const int _maxEntryIdLength = 1024;
+const int _maxShareCipherLength = 1024;
+const int _maxBodyLength = 64 * 1024 * 1024;
 
 /// 库文件解析/格式异常。
 class VaultFileException implements Exception {
@@ -60,13 +65,30 @@ class VaultHeader {
 }
 
 Argon2Deriver _deriverFromParams(Map<String, Object> params, Uint8List salt) {
-  return Argon2Deriver(
-    memory: (params['memory']! as num).toInt(),
-    iterations: (params['iterations']! as num).toInt(),
-    parallelism: (params['parallelism']! as num).toInt(),
-    hashLength: (params['hashLength']! as num).toInt(),
-    salt: salt,
-  );
+  try {
+    final memory = (params['memory']! as num).toInt();
+    final iterations = (params['iterations']! as num).toInt();
+    final parallelism = (params['parallelism']! as num).toInt();
+    final hashLength = (params['hashLength']! as num).toInt();
+    if (memory < 8 * 1024 || memory > 1024 * 1024 ||
+        iterations < 1 || iterations > 100 ||
+        parallelism < 1 || parallelism > 16 ||
+        hashLength < 32 || hashLength > 128 ||
+        salt.length < 16 || salt.length > 64) {
+      throw VaultFileException('文件损坏');
+    }
+    return Argon2Deriver(
+      memory: memory,
+      iterations: iterations,
+      parallelism: parallelism,
+      hashLength: hashLength,
+      salt: salt,
+    );
+  } on VaultFileException {
+    rethrow;
+  } on Object catch (_) {
+    throw VaultFileException('文件损坏');
+  }
 }
 
 /// 已解析的库文件元数据。
@@ -99,35 +121,60 @@ class VaultFile {
     required List<ShareRecord> shares,
     required Uint8List body,
   }) async {
+    if (shares.length > _maxShares) {
+      throw VaultFileException('文件过大');
+    }
+    if (body.length < _nonceLength + _macLength ||
+        body.length > _maxBodyLength) {
+      throw VaultFileException('文件损坏');
+    }
+    for (final s in shares) {
+      if (s.entryId.isEmpty ||
+          utf8.encode(s.entryId).length > _maxEntryIdLength ||
+          s.nonce.length != _nonceLength ||
+          s.cipher.length < 32 + _macLength ||
+          s.cipher.length > _maxShareCipherLength ||
+          s.x <= BigInt.zero ||
+          s.x >= Shamir.primeP) {
+        throw VaultFileException('文件损坏');
+      }
+    }
     final tmp = File('$path.tmp');
+    if (await tmp.exists()) await tmp.delete();
     final sink = tmp.openWrite();
     try {
-      sink.add(ascii.encode(_magic));
-      sink.add(const [0x0A]);
-      sink.add(ascii.encode(jsonEncode(header.toJson())));
-      sink.add(const [0x0A]);
+      try {
+        sink.add(ascii.encode(_magic));
+        sink.add(const [0x0A]);
+        sink.add(ascii.encode(jsonEncode(header.toJson())));
+        sink.add(const [0x0A]);
 
-      // ── SHARES ──
-      sink.add(_u32(shares.length));
-      for (final s in shares) {
-        final id = utf8.encode(s.entryId);
-        sink.add(_u16(id.length));
-        sink.add(id);
-        sink.add(ShamirShims.bigIntToBytes(s.x));
-        sink.add(_u16(s.nonce.length));
-        sink.add(s.nonce);
-        sink.add(_u32(s.cipher.length));
-        sink.add(s.cipher);
+        // ── SHARES ──
+        sink.add(_u32(shares.length));
+        for (final s in shares) {
+          final id = utf8.encode(s.entryId);
+          sink.add(_u16(id.length));
+          sink.add(id);
+          sink.add(ShamirShims.bigIntToBytes(s.x));
+          sink.add(_u16(s.nonce.length));
+          sink.add(s.nonce);
+          sink.add(_u32(s.cipher.length));
+          sink.add(s.cipher);
+        }
+
+        // ── BODY ──
+        sink.add(_u32(body.length));
+        sink.add(body);
+        await sink.flush();
+      } finally {
+        await sink.close();
       }
-
-      // ── BODY ──
-      sink.add(_u32(body.length));
-      sink.add(body);
-    } finally {
-      await sink.flush();
-      await sink.close();
+      await tmp.rename(path);
+      await read(path);
+    } catch (_) {
+      if (await tmp.exists()) await tmp.delete();
+      rethrow;
     }
-    await tmp.rename(path);
   }
 
   /// 4 字节大端整数（立即拷贝，避免 IOSink 延迟 flush 共享 buffer）。
@@ -162,22 +209,34 @@ class VaultFile {
       );
 
       // ── SHARES ──
+      final fileLength = await random.length();
+      if (fileLength > _maxBodyLength + 16 * 1024 * 1024) {
+        throw VaultFileException('文件过大');
+      }
       final shareCount = await _readU32(random, pos);
       pos += 4;
+      if (shareCount > _maxShares) throw VaultFileException('文件过大');
       final shares = <ShareRecord>[];
       for (var i = 0; i < shareCount; i++) {
         final idLen = await _readU16(random, pos);
         pos += 2;
+        if (idLen == 0 || idLen > _maxEntryIdLength) {
+          throw VaultFileException('文件损坏');
+        }
         final idBytes = await _readBytes(random, pos, idLen);
         pos += idLen;
         final xBytes = await _readBytes(random, pos, 32);
         pos += 32;
         final nonceLen = await _readU16(random, pos);
         pos += 2;
+        if (nonceLen != _nonceLength) throw VaultFileException('文件损坏');
         final nonce = await _readBytes(random, pos, nonceLen);
         pos += nonceLen;
         final cipherLen = await _readU32(random, pos);
         pos += 4;
+        if (cipherLen < 32 + _macLength || cipherLen > _maxShareCipherLength) {
+          throw VaultFileException('文件损坏');
+        }
         final cipher = await _readBytes(random, pos, cipherLen);
         pos += cipherLen;
         if (nonce.length != _nonceLength) throw VaultFileException('文件损坏');
@@ -192,8 +251,12 @@ class VaultFile {
       // ── BODY ──
       final bodyLen = await _readU32(random, pos);
       pos += 4;
+      if (bodyLen < _nonceLength + _macLength || bodyLen > _maxBodyLength) {
+        throw VaultFileException('文件损坏');
+      }
       final bodyOffset = pos;
       pos += bodyLen;
+      if (pos != fileLength) throw VaultFileException('文件损坏');
 
       return VaultFileData(
         path: path,

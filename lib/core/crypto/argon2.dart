@@ -15,13 +15,61 @@ class Argon2Deriver {
     int iterations = 3,
     int parallelism = 1,
     int hashLength = 32,
-    required this._salt,
-  }) : _algorithm = Argon2id(
+    required List<int> salt,
+  })  : _salt = _validatedSalt(
+          memory: memory,
+          iterations: iterations,
+          parallelism: parallelism,
+          hashLength: hashLength,
+          salt: salt,
+        ),
+        _algorithm = Argon2id(
           memory: memory,
           iterations: iterations,
           parallelism: parallelism,
           hashLength: hashLength,
         );
+
+  static List<int> _validatedSalt({
+    required int memory,
+    required int iterations,
+    required int parallelism,
+    required int hashLength,
+    required List<int> salt,
+  }) {
+    _validateParameters(
+      memory: memory,
+      iterations: iterations,
+      parallelism: parallelism,
+      hashLength: hashLength,
+      salt: salt,
+    );
+    return List.unmodifiable(salt);
+  }
+
+  static void _validateParameters({
+    required int memory,
+    required int iterations,
+    required int parallelism,
+    required int hashLength,
+    required List<int> salt,
+  }) {
+    if (memory < 8 || memory > 1024 * 1024) {
+      throw ArgumentError('Argon2 memory out of range');
+    }
+    if (iterations < 1 || iterations > 100) {
+      throw ArgumentError('Argon2 iterations out of range');
+    }
+    if (parallelism < 1 || parallelism > 16) {
+      throw ArgumentError('Argon2 parallelism out of range');
+    }
+    if (hashLength < 32 || hashLength > 128) {
+      throw ArgumentError('Argon2 hash length out of range');
+    }
+    if (salt.length < 16 || salt.length > 64) {
+      throw ArgumentError('Argon2 salt length out of range');
+    }
+  }
 
   /// 全局 salt 字节（供文件头序列化与测试使用）。
   List<int> get salt => _salt;
